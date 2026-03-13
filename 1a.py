@@ -1,13 +1,9 @@
-"""
+""""
 Assignment 1a - Multi-stage MIP Production Planning (Infinite Capacity)
 ========================================================================
 Place this file in the same folder as input_data.json and run:
     python assignment1a.py
-
-Requirements:
-    pip install gurobipy pandas openpyxl
 """
-
 import json
 import gurobipy as gp
 from gurobipy import GRB
