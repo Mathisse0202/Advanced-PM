@@ -1,3 +1,4 @@
 # python -m venv venv -> to install venv
 # .\venv\Scripts\Activate.ps1 -> in cmd prompt to activate
-# python -m pip install gurobipy -> to install gurobi in cmd prompt
+# python -m pip install gurobipy -> to install gurobi
+# python -m pip install pandas openpyxl -> to install pandas
