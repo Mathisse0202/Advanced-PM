@@ -146,10 +146,12 @@ def build_base_model(data, demand, model_name, with_backorders=False):
     m.setParam("MIPGap", 1e-4)
 
     # --- Decision variables ---
-    p = m.addVars(parts, periods, name="p", lb=0.0)
-    q = m.addVars(parts, periods, name="q", lb=0.0)
+    # Production and inventory quantities are integers (discrete units)
+    p = m.addVars(parts, periods, name="p", lb=0.0, vtype=GRB.INTEGER)
+    q = m.addVars(parts, periods, name="q", lb=0.0, vtype=GRB.INTEGER)
     y = m.addVars(parts, periods, name="y", vtype=GRB.BINARY)
-    b = m.addVars(periods, name="b", lb=0.0) if with_backorders else None
+    # Backorders are also integer (whole units)
+    b = m.addVars(periods, name="b", lb=0.0, vtype=GRB.INTEGER) if with_backorders else None
 
     # --- Base objective: setup + holding costs ---
     base_obj = gp.quicksum(
@@ -239,7 +241,8 @@ def add_overtime_vars(m, data):
     OT_MAX_X  = data["OT_MAX_X"]
     OT_MAX_Y  = data["OT_MAX_Y"]   # in minutes
 
-    ox = m.addVars(periods, name="ox", lb=0.0, ub=OT_MAX_X)
+    # Overtime units on WS-X are discrete (whole units); WS-Y in minutes (continuous ok)
+    ox = m.addVars(periods, name="ox", lb=0.0, ub=OT_MAX_X, vtype=GRB.INTEGER)
     oy = m.addVars(periods, name="oy", lb=0.0, ub=OT_MAX_Y)
     return ox, oy
 
@@ -263,7 +266,9 @@ def add_modernization_vars(m, data):
     pct_per_increment = MOD_INCR_Y / MOD_COST_PCT_Y   # = 0.01
     max_increments    = int(MOD_MAX_PCT_Y / pct_per_increment)  # = 4000
 
-    dx     = m.addVar(name="dx",     lb=0.0, ub=MOD_MAX_X)
+    # dx: extra units of WS-X capacity — must be a whole number of units
+    # dy: extra % of WS-Y capacity — controlled via integer increment variable dy_int
+    dx     = m.addVar(name="dx",     lb=0.0, ub=MOD_MAX_X, vtype=GRB.INTEGER)
     dy     = m.addVar(name="dy",     lb=0.0, ub=MOD_MAX_PCT_Y)
     dy_int = m.addVar(name="dy_int", vtype=GRB.INTEGER, lb=0, ub=max_increments)
 
@@ -441,7 +446,9 @@ def make_plan_df(var_dict, parts, periods):
     for i in parts:
         row = {"Part": i}
         for t in periods:
-            row["W" + str(t)] = round(var_dict[i, t].X, 1)
+            val = var_dict[i, t].X
+            # Show as integer when the value is whole (production/inventory are integer vars)
+            row["W" + str(t)] = int(round(val))
         rows.append(row)
     return pd.DataFrame(rows).set_index("Part")
 
