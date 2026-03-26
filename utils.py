@@ -15,6 +15,7 @@ Usage:
 import json
 import pandas as pd
 from collections import defaultdict
+from gurobipy import GRB
  
  
 # =============================================================================
