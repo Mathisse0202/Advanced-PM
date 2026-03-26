@@ -241,9 +241,9 @@ def add_overtime_vars(m, data):
     OT_MAX_X  = data["OT_MAX_X"]
     OT_MAX_Y  = data["OT_MAX_Y"]   # in minutes
  
-    # Overtime units on WS-X are discrete (whole units); WS-Y in minutes (continuous ok)
+    # Overtime units on WS-X and WS-Y are both integer (whole units / whole minutes)
     ox = m.addVars(periods, name="ox", lb=0.0, ub=OT_MAX_X, vtype=GRB.INTEGER)
-    oy = m.addVars(periods, name="oy", lb=0.0, ub=OT_MAX_Y)
+    oy = m.addVars(periods, name="oy", lb=0.0, ub=OT_MAX_Y, vtype=GRB.INTEGER)
     return ox, oy
  
  
@@ -266,15 +266,17 @@ def add_modernization_vars(m, data):
     pct_per_increment = MOD_INCR_Y / MOD_COST_PCT_Y   # = 0.01
     max_increments    = int(MOD_MAX_PCT_Y / pct_per_increment)  # = 4000
  
-    # dx: extra units of WS-X capacity — must be a whole number of units
-    # dy: extra % of WS-Y capacity — controlled via integer increment variable dy_int
-    dx     = m.addVar(name="dx",     lb=0.0, ub=MOD_MAX_X, vtype=GRB.INTEGER)
-    dy     = m.addVar(name="dy",     lb=0.0, ub=MOD_MAX_PCT_Y)
-    dy_int = m.addVar(name="dy_int", vtype=GRB.INTEGER, lb=0, ub=max_increments)
+    # dx: extra units of WS-X capacity — integer number of units
+    # dy: returned as the integer increment variable (dy_int); callers multiply by
+    #     pct_per_increment to get the actual % capacity increase.
+    #     This keeps all decision variables integer and avoids fractional solutions.
+    dx     = m.addVar(name="dx",     lb=0.0, ub=MOD_MAX_X,     vtype=GRB.INTEGER)
+    dy_int = m.addVar(name="dy_int", lb=0.0, ub=max_increments, vtype=GRB.INTEGER)
  
-    m.addConstr(dy == pct_per_increment * dy_int, name="dy_increment_constraint")
+    # Store the conversion factor on the model so capacity functions can use it
+    m._pct_per_increment = pct_per_increment
  
-    return dx, dy
+    return dx, dy_int
  
  
 def add_capacity_with_overtime(m, p, ox, oy, data):
@@ -300,18 +302,20 @@ def add_capacity_with_modernization(m, p, dx, dy, data):
     """
     Add capacity constraints extended with permanent modernization.
     WS-X: p[E2801,t] <= CAP_X + dx
-    WS-Y: ... <= CAP_Y + (CAP_Y / 100) * dy
+    WS-Y: ... <= CAP_Y + (CAP_Y / 100) * pct_per_increment * dy
+    dy here is dy_int (integer increments); pct_per_increment is stored on m.
     Used in assignment 4.
     """
     CAP_X  = data["CAP_X"]
     CAP_Y  = data["CAP_Y"]
     PROC_Y = data["PROC_Y"]
+    pct_per_increment = m._pct_per_increment
  
     for t in data["periods"]:
         m.addConstr(p["E2801", t] <= CAP_X + dx, name="cap_X_" + str(t))
         m.addConstr(
             PROC_Y["B1401"] * p["B1401", t] + PROC_Y["B2302"] * p["B2302", t]
-            <= CAP_Y + (CAP_Y / 100.0) * dy,
+            <= CAP_Y + (CAP_Y / 100.0) * pct_per_increment * dy,
             name="cap_Y_" + str(t)
         )
  
@@ -320,18 +324,20 @@ def add_capacity_combined(m, p, ox, oy, dx, dy, data):
     """
     Add capacity constraints with BOTH overtime and modernization.
     WS-X: p[E2801,t] <= CAP_X + dx + ox[t]
-    WS-Y: ... <= CAP_Y + (CAP_Y/100)*dy + oy[t]
+    WS-Y: ... <= CAP_Y + (CAP_Y/100)*pct_per_increment*dy + oy[t]
+    dy here is dy_int (integer increments); pct_per_increment is stored on m.
     Used in assignment 5.
     """
     CAP_X  = data["CAP_X"]
     CAP_Y  = data["CAP_Y"]
     PROC_Y = data["PROC_Y"]
+    pct_per_increment = m._pct_per_increment
  
     for t in data["periods"]:
         m.addConstr(p["E2801", t] <= CAP_X + dx + ox[t], name="cap_X_" + str(t))
         m.addConstr(
             PROC_Y["B1401"] * p["B1401", t] + PROC_Y["B2302"] * p["B2302", t]
-            <= CAP_Y + (CAP_Y / 100.0) * dy + oy[t],
+            <= CAP_Y + (CAP_Y / 100.0) * pct_per_increment * dy + oy[t],
             name="cap_Y_" + str(t)
         )
  
@@ -365,6 +371,7 @@ def set_overtime_objective(m, p, q, y, ox, oy, b, data, with_backorders):
 def set_modernization_objective(m, p, q, y, dx, dy, b, data, with_backorders):
     """
     Set full objective including modernization costs.
+    dy is dy_int (integer increments); cost = MOD_COST_PCT_Y * pct_per_increment * dy.
     """
     import gurobipy as gp
     from gurobipy import GRB
@@ -376,11 +383,12 @@ def set_modernization_objective(m, p, q, y, dx, dy, b, data, with_backorders):
     BO_COST        = data["BO_COST"]
     MOD_COST_X     = data["MOD_COST_X"]
     MOD_COST_PCT_Y = data["MOD_COST_PCT_Y"]
+    pct_per_increment = m._pct_per_increment
  
     obj = (
         gp.quicksum(SC[i] * y[i, t] + HC[i] * q[i, t] for i in parts for t in periods)
         + MOD_COST_X * dx
-        + MOD_COST_PCT_Y * dy
+        + MOD_COST_PCT_Y * pct_per_increment * dy
     )
     if with_backorders:
         obj = obj + gp.quicksum(BO_COST * b[t] for t in periods)
@@ -390,6 +398,8 @@ def set_modernization_objective(m, p, q, y, dx, dy, b, data, with_backorders):
 def set_combined_objective(m, p, q, y, ox, oy, dx, dy, b, data, with_backorders):
     """
     Set full objective: setup + holding + overtime + modernization + (optional) backorder.
+    dy is dy_int (integer increments); cost = MOD_COST_PCT_Y * pct_per_increment * dy.
+    oy is integer minutes; cost = OT_COST_Y * (oy / 60).
     """
     import gurobipy as gp
     from gurobipy import GRB
@@ -403,13 +413,14 @@ def set_combined_objective(m, p, q, y, ox, oy, dx, dy, b, data, with_backorders)
     OT_COST_Y      = data["OT_COST_Y"]
     MOD_COST_X     = data["MOD_COST_X"]
     MOD_COST_PCT_Y = data["MOD_COST_PCT_Y"]
+    pct_per_increment = m._pct_per_increment
  
     obj = (
         gp.quicksum(SC[i] * y[i, t] + HC[i] * q[i, t] for i in parts for t in periods)
         + gp.quicksum(OT_COST_X * ox[t] for t in periods)
         + gp.quicksum(OT_COST_Y * (oy[t] / 60.0) for t in periods)
         + MOD_COST_X * dx
-        + MOD_COST_PCT_Y * dy
+        + MOD_COST_PCT_Y * pct_per_increment * dy
     )
     if with_backorders:
         obj = obj + gp.quicksum(BO_COST * b[t] for t in periods)
