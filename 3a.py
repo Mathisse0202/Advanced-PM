@@ -1,134 +1,145 @@
 """
-Assignment 3a & 3b
-==================
-Finite capacity with overtime option on both workstations.
+assignment_3a.py
+----------------
+Assignment 3a: Production planning with finite capacity + OVERTIME (forecasted demand).
 
-WS-X overtime : EUR 2 / extra unit, max 300 units / period
-WS-Y overtime : EUR 120 / hour (= EUR 2 / minute), max 38 hours / period
+Workstation X: capacity 800 units/week, overtime up to 300 units/week at €2/unit
+Workstation Y: capacity 10000 min/week, overtime up to 38 hours/week at €120/hour
 
-3a : forecasted demand, no backorders
-3b : realized demand, backorders (EUR 250 / unit / period)
-
-Output: output_3a.xlsx, output_3b.xlsx
+Uses forecasted demand (D_fcst).
 """
 
 import pandas as pd
-from gurobipy import GRB
+from datetime import datetime
+
 from utils import (
-    load_data, build_base_model,
-    add_overtime_vars, add_capacity_with_overtime, set_overtime_objective,
-    compute_service_metrics,
-    make_plan_df, make_setup_df, build_cost_summary, demand_row_df,
-    write_excel, print_cost_summary,
+    load_data,
+    build_base_model,
+    add_overtime_vars,
+    add_capacity_with_overtime,
+    set_overtime_objective,
+    make_plan_df,
+    make_setup_df,
+    build_cost_summary,
+    demand_row_df,
+    write_excel,
+    print_cost_summary,
 )
 
 
-def solve_3(demand, label, with_backorders):
-    """Solve assignment 3 for the given demand scenario."""
+def _safe_write(filename, sheets):
+    """Write Excel; if file is locked, fall back to a timestamped name."""
+    try:
+        write_excel(filename, sheets)
+    except PermissionError:
+        ts = datetime.now().strftime("%H%M%S")
+        fallback = filename.replace(".xlsx", f"_{ts}.xlsx")
+        print(f"  [Warning] {filename} is open in Excel — writing to {fallback} instead.")
+        write_excel(fallback, sheets)
 
-    data      = load_data()
-    parts     = data["parts"]
-    periods   = data["periods"]
-    BO_COST   = data["BO_COST"]
-    OT_COST_X = data["OT_COST_X"]
-    OT_COST_Y = data["OT_COST_Y"]
 
-    # --- Build model ---
+def solve_3a(data):
+    demand  = data["D_fcst"]
+    parts   = data["parts"]
+    periods = data["periods"]
+
+    # Build base model (no backorders for part a)
     m, p, q, y, b = build_base_model(
-        data, demand, "Assignment_3_" + label, with_backorders=with_backorders
+        data, demand,
+        model_name="Assignment3a_Overtime_Forecast",
+        with_backorders=False,
     )
 
     # Add overtime variables
     ox, oy = add_overtime_vars(m, data)
 
-    # Replace base objective with full objective including overtime costs
-    set_overtime_objective(m, p, q, y, ox, oy, b, data, with_backorders)
-
     # Add capacity constraints extended with overtime
     add_capacity_with_overtime(m, p, ox, oy, data)
 
+    # Set full objective: setup + holding + overtime costs
+    set_overtime_objective(m, p, q, y, ox, oy, b, data, with_backorders=False)
+
     m.optimize()
 
-    if m.Status not in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
-        print("No solution for " + label + ". Status: " + str(m.Status))
+    if m.Status not in (2, 9):  # 2 = OPTIMAL, 9 = TIME_LIMIT with solution
+        print("No feasible solution found. Gurobi status:", m.Status)
         return
 
-    # --- Costs ---
-    total_ot_x = sum(OT_COST_X * ox[t].X for t in periods)
-    total_ot_y = sum(OT_COST_Y * (oy[t].X / 60.0) for t in periods)
+    # -------------------------------------------------------------------------
+    # Overtime costs (clamp tiny negatives from floating point to 0)
+    OT_COST_X = data["OT_COST_X"]
+    OT_COST_Y = data["OT_COST_Y"]
+    ot_x_vals = {t: max(ox[t].X, 0.0) for t in periods}
+    ot_y_vals = {t: max(oy[t].X, 0.0) for t in periods}
 
+    ot_cost_x_total = sum(OT_COST_X * ot_x_vals[t] for t in periods)
+    ot_cost_y_total = sum(OT_COST_Y * (ot_y_vals[t] / 60.0) for t in periods)
+    ot_total = ot_cost_x_total + ot_cost_y_total
+
+    # -------------------------------------------------------------------------
+    # Cost summary 
     extra = {
-        "Overtime Cost X (EUR)": total_ot_x,
-        "Overtime Cost Y (EUR)": total_ot_y,
+        "OT Cost WS-X (EUR)":        ot_cost_x_total,
+        "OT Cost WS-Y (EUR)":        ot_cost_y_total,
+        "Overtime Cost Total (EUR)": ot_total,
     }
-    if with_backorders:
-        total_bo = sum(BO_COST * b[t].X for t in periods)
-        extra["Backorder Cost (EUR)"] = total_bo
-
     df_cost, total_setup, total_holding = build_cost_summary(p, q, y, data, extra=extra)
+    grand_total = total_setup + total_holding + ot_total
+    df_cost.loc["TOTAL", "Grand Total (EUR)"] = round(grand_total, 2)
 
-    total_cost = total_setup + total_holding + total_ot_x + total_ot_y
-    if with_backorders:
-        total_cost += total_bo
+    # Replace NaN with "" for cleaner display (part rows don't have OT costs)
+    df_cost = df_cost.fillna("")
 
-    title = "ASSIGNMENT 3" + label.upper() + " — Finite Capacity + Overtime"
-    print_cost_summary(title, df_cost)
-    print("  Overtime Cost X : EUR " + "{:,.2f}".format(total_ot_x))
-    print("  Overtime Cost Y : EUR " + "{:,.2f}".format(total_ot_y))
-    print("  Total Cost      : EUR " + "{:,.2f}".format(total_cost))
+    # 1. PRINT NAAR TERMINAL
+    print_cost_summary("Assignment 3a — Overtime (Forecasted Demand)", df_cost)
+    
+    print("\n--- Specifieke Kosten Breakdown ---")
+    print(f"Setup Cost:        € {total_setup:,.1f}")
+    print(f"Holding Cost:      € {total_holding:,.1f}")
+    print(f"Overtime Cost X:   € {ot_cost_x_total:,.1f}")
+    print(f"Overtime Cost Y:   € {ot_cost_y_total:,.1f}")
+    print(f"Total Overtime:    € {ot_total:,.1f}")
+    print(f"TOTAL COST:        € {grand_total:,.1f}")
+    print("-----------------------------------\n")
 
-    if with_backorders:
-        service_level, fill_rate = compute_service_metrics(b, demand, periods)
-        print("  Service Level   :  " + "{:.2%}".format(service_level))
-        print("  Fill Rate       :  " + "{:.2%}".format(fill_rate))
+    # Overtime usage per period
+    print("Overtime usage per period:")
+    print(f"{'Period':<8} {'OT_X (units)':<16} {'OT_Y (min)':<14} {'OT_Y (hours)':<14}")
+    for t in periods:
+        print(f"  W{t:<5} {ot_x_vals[t]:<16.1f} {ot_y_vals[t]:<14.1f} {ot_y_vals[t]/60:.2f}")
 
-    # --- Overtime schedule ---
+    # -------------------------------------------------------------------------
+    # Output DataFrames
+    df_prod   = make_plan_df(p, parts, periods)
+    df_inv    = make_plan_df(q, parts, periods)
+    df_setup  = make_setup_df(y, parts, periods)
+    df_demand = demand_row_df(demand, periods, label="Demand E2801 (Forecast)")
+
     ot_rows = []
     for t in periods:
         ot_rows.append({
-            "Period":            t,
-            "OT Units X":        round(ox[t].X, 1),
-            "OT Minutes Y":      round(oy[t].X, 1),
-            "OT Hours Y":        round(oy[t].X / 60.0, 2),
-            "OT Cost X (EUR)":   round(OT_COST_X * ox[t].X, 2),
-            "OT Cost Y (EUR)":   round(OT_COST_Y * (oy[t].X / 60.0), 2),
+            "Period":          f"W{t}",
+            "OT WS-X (units)": round(ot_x_vals[t], 1),
+            "OT WS-Y (min)":   round(ot_y_vals[t], 1),
+            "OT WS-Y (hours)": round(ot_y_vals[t] / 60.0, 3),
         })
-    df_ot = pd.DataFrame(ot_rows).set_index("Period")
+    df_overtime = pd.DataFrame(ot_rows).set_index("Period")
 
-    # --- Summary metrics ---
-    summary_rows = [
-        {"Metric": "Setup Cost (EUR)",      "Value": round(total_setup, 2)},
-        {"Metric": "Holding Cost (EUR)",    "Value": round(total_holding, 2)},
-        {"Metric": "Overtime Cost X (EUR)", "Value": round(total_ot_x, 2)},
-        {"Metric": "Overtime Cost Y (EUR)", "Value": round(total_ot_y, 2)},
-        {"Metric": "Total Cost (EUR)",      "Value": round(total_cost, 2)},
-    ]
-    if with_backorders:
-        summary_rows.insert(4, {"Metric": "Backorder Cost (EUR)", "Value": round(total_bo, 2)})
-        summary_rows.append({"Metric": "Service Level", "Value": round(service_level, 4)})
-        summary_rows.append({"Metric": "Fill Rate",     "Value": round(fill_rate, 4)})
-    df_summary = pd.DataFrame(summary_rows).set_index("Metric")
+    # 2. OUTPUT NAAR EXCEL
+    _safe_write(
+        "output_3a.xlsx",
+        {
+            "Production Plan": pd.concat([df_prod, df_demand]),
+            "Inventory Plan":  df_inv,
+            "Setup Plan":      df_setup,
+            "Overtime Plan":   df_overtime,
+            "Cost Summary":    df_cost,
+        },
+    )
 
-    df_prod  = make_plan_df(p, parts, periods)
-    df_inv   = make_plan_df(q, parts, periods)
-    df_setup = make_setup_df(y, parts, periods)
-    d_label  = "Realized Demand E2801" if with_backorders else "Forecast Demand E2801"
-    df_dem   = demand_row_df(demand, periods, label=d_label)
-
-    fname = "output_3a.xlsx" if not with_backorders else "output_3b.xlsx"
-    write_excel(fname, {
-        "Summary":         df_summary,
-        "Cost per Part":   df_cost,
-        "Overtime":        df_ot,
-        "Production Plan": pd.concat([df_prod, df_dem]),
-        "Inventory Plan":  df_inv,
-        "Setup Decisions": df_setup,
-    })
+    return m, grand_total
 
 
-# -----------------------------------------------------------------------------
-# Run both scenarios
-# -----------------------------------------------------------------------------
-data = load_data()
-solve_3(data["D_fcst"], "3a", with_backorders=False)
-solve_3(data["D_real"], "3b", with_backorders=True)
+if __name__ == "__main__":
+    data = load_data("input_data.json")
+    solve_3a(data)
