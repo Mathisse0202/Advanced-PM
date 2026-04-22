@@ -50,11 +50,11 @@ def load_data(path="input_data.json"):
     OT_MAX_Y  = raw["overtime"]["max_hours_Y"] * 60  # stored as minutes internally
  
     # Modernization parameters
-    MOD_COST_X    = raw["modernization"]["cost_per_unit_X"]
-    MOD_MAX_X     = raw["modernization"]["max_units_X"]
+    MOD_COST_X     = raw["modernization"]["cost_per_unit_X"]
+    MOD_MAX_X      = raw["modernization"]["max_units_X"]
     MOD_COST_PCT_Y = raw["modernization"]["cost_per_pct_Y"]
-    MOD_INCR_Y    = raw["modernization"]["increment_eur_Y"]   # EUR 15 per increment
-    MOD_MAX_PCT_Y = raw["modernization"]["max_pct_Y"]
+    MOD_INCR_Y     = raw["modernization"]["increment_eur_Y"]   # EUR 15 per increment
+    MOD_MAX_PCT_Y  = raw["modernization"]["max_pct_Y"]
  
     # Backorder cost
     BO_COST = raw["backorder_cost_per_unit_per_period"]
@@ -183,10 +183,11 @@ def build_base_model(data, demand, model_name, with_backorders=False):
             )
  
             if i == "E2801" and with_backorders:
-                # Balance with backorders: supply = demand + new backlog + inventory
+                # Correct inventory/backorder balance:
+                # q_t - b_t = q_{t-1} - b_{t-1} + arriving - demand
                 b_prev = 0.0 if t == 1 else b[t - 1]
                 m.addConstr(
-                    q_prev + b_prev + arriving == ext_demand + b[t] + q[i, t],
+                    q_prev + arriving + b[t] == ext_demand + b_prev + q[i, t],
                     name="inv_" + i + "_" + str(t)
                 )
             else:
@@ -258,10 +259,10 @@ def add_modernization_vars(m, data):
     import gurobipy as gp
     from gurobipy import GRB
  
-    MOD_MAX_X     = data["MOD_MAX_X"]
-    MOD_MAX_PCT_Y = data["MOD_MAX_PCT_Y"]
-    MOD_INCR_Y    = data["MOD_INCR_Y"]       # EUR 15 per increment
-    MOD_COST_PCT_Y = data["MOD_COST_PCT_Y"]  # EUR 1500 per 1%
+    MOD_MAX_X      = data["MOD_MAX_X"]
+    MOD_MAX_PCT_Y  = data["MOD_MAX_PCT_Y"]
+    MOD_INCR_Y     = data["MOD_INCR_Y"]       # EUR 15 per increment
+    MOD_COST_PCT_Y = data["MOD_COST_PCT_Y"]   # EUR 1500 per 1%
  
     # Each increment of EUR 15 buys 15/1500 = 0.01% extra WS-Y capacity
     pct_per_increment = MOD_INCR_Y / MOD_COST_PCT_Y   # = 0.01
@@ -448,7 +449,6 @@ def make_plan_df(var_dict, parts, periods):
         row = {"Part": i}
         for t in periods:
             val = var_dict[i, t].X
-            # Show as integer when the value is whole (production/inventory are integer vars)
             row["W" + str(t)] = int(round(val))
         rows.append(row)
     return pd.DataFrame(rows).set_index("Part")
@@ -477,9 +477,9 @@ def build_cost_summary(p, q, y, data, extra=None):
     SC      = data["SC"]
     HC      = data["HC"]
  
-    rows           = []
-    total_setup    = 0.0
-    total_holding  = 0.0
+    rows          = []
+    total_setup   = 0.0
+    total_holding = 0.0
  
     for i in parts:
         s  = sum(SC[i] * y[i, t].X for t in periods)
