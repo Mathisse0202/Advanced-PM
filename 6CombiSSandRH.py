@@ -73,8 +73,8 @@ import gurobipy as gp
 # =============================================================================
 # TUNABLE PARAMETERS
 # =============================================================================
-RH_FREQ  = 12   # Re-plan every RH_FREQ periods
-SS_E2801 = 35   # Safety stock for E2801 (units); based on 95% CSL
+RH_FREQ  = 13   # Re-plan every RH_FREQ periods
+SS_E2801 = 42   # Safety stock for E2801 (units); based on 95% CSL
 
 
 # =============================================================================
