@@ -73,45 +73,26 @@ import gurobipy as gp
 # =============================================================================
 # TUNABLE PARAMETERS
 # =============================================================================
-RH_FREQ  = 5    # Re-plan every RH_FREQ periods
-SS_E2801 = 58   # Safety stock for E2801 (units); based on 95% CSL
+RH_FREQ  = 12   # Re-plan every RH_FREQ periods
+SS_E2801 = 35   # Safety stock for E2801 (units); based on 95% CSL
 
 
 # =============================================================================
 # HELPER: solve one rolling-horizon window
 # =============================================================================
-
 def solve_window(data, demand_window, I0_window, T_window,
                  dx_fix, dy_fix, ox_fix_dict, oy_fix_dict,
                  frozen_p, frozen_y, window_start,
                  with_ss=True):
-    """
-    Solve a single planning window.
 
-    Parameters
-    ----------
-    data          : full data dict from load_data()
-    demand_window : list of length T_window — forecast demand for this window
-    I0_window     : dict {part: starting inventory} at the start of this window
-    T_window      : number of periods in this window
-    dx_fix, dy_fix: fixed modernization from 5a
-    ox_fix_dict   : {abs_period: ox_value} already fixed (periods before window)
-    oy_fix_dict   : {abs_period: oy_value} already fixed
-    frozen_p      : {(part, abs_period): qty} decisions already executed
-    frozen_y      : {(part, abs_period): 0/1} decisions already executed
-    window_start  : 1-based absolute period of the first period in this window
-    with_ss       : whether to enforce safety stock constraint on E2801
+    import gurobipy as gp
+    from gurobipy import GRB
 
-    Returns
-    -------
-    p_sol, y_sol, ox_sol, oy_sol : dicts keyed by local period (1..T_window)
-    obj_val : objective value of this window's model
-    """
     parts   = data["parts"]
     LT      = data["LT"]
     Q_min   = data["Q_min"]
     BOM     = data["BOM"]
-    parents = data["parents"]  # child -> {parent: qty}
+    parents = data["parents"]
     SC      = data["SC"]
     HC      = data["HC"]
     BIG_M   = data["BIG_M"]
@@ -126,14 +107,16 @@ def solve_window(data, demand_window, I0_window, T_window,
 
     periods_local = list(range(1, T_window + 1))
 
-    m = gp.Model("window_" + str(window_start))
+    m = gp.Model(f"window_{window_start}")
     m.setParam("OutputFlag", 0)
     m.setParam("MIPGap", 1e-4)
 
-    # Decision variables (local period indexing)
+    # --- Variables ---
     p  = m.addVars(parts, periods_local, name="p", lb=0.0, vtype=GRB.INTEGER)
     q  = m.addVars(parts, periods_local, name="q", lb=0.0, vtype=GRB.INTEGER)
     y  = m.addVars(parts, periods_local, name="y", vtype=GRB.BINARY)
+    b  = m.addVars(periods_local, name="b", lb=0.0, vtype=GRB.INTEGER)
+
     ox = m.addVars(periods_local, name="ox", lb=0.0, ub=OT_MAX_X, vtype=GRB.INTEGER)
     oy = m.addVars(periods_local, name="oy", lb=0.0, ub=OT_MAX_Y)
 
@@ -143,79 +126,85 @@ def solve_window(data, demand_window, I0_window, T_window,
                     for i in parts for t in periods_local)
         + gp.quicksum(OT_COST_X * ox[t] for t in periods_local)
         + gp.quicksum(OT_COST_Y * (oy[t] / 60.0) for t in periods_local)
+        + gp.quicksum(BO_COST * b[t] for t in periods_local)
     )
     m.setObjective(obj, GRB.MINIMIZE)
 
-    # --- Inventory balance and lot sizing ---
-    from collections import defaultdict
-
+    # --- Constraints ---
     for i in parts:
         for t_loc in periods_local:
             t_abs = window_start + t_loc - 1
 
+            # Previous inventory
             q_prev = I0_window[i] if t_loc == 1 else q[i, t_loc - 1]
 
-            # Production ordered t_abs - LT[i] must have arrived
+            # Arrivals
             t_order_abs = t_abs - LT[i]
             t_order_loc = t_order_abs - window_start + 1
 
             if t_order_abs < 1:
-                arriving = 0.0
+                arriving = 0
             elif t_order_loc < 1:
-                # Was ordered before this window => already executed
                 arriving = frozen_p.get((i, t_order_abs), 0)
             else:
                 arriving = p[i, t_order_loc]
 
+            # Demand
             ext_demand = demand_window[t_loc - 1] if i == "E2801" else 0
+
             ind_demand = (
-                gp.quicksum(BOM[j][i] * p[j, t_loc] for j in parents[i]
-                            if j in BOM and i in BOM[j])
+                gp.quicksum(BOM[j][i] * p[j, t_loc] for j in parents[i])
                 if i in parents else 0
             )
 
-            m.addConstr(
-                q_prev + arriving == ext_demand + ind_demand + q[i, t_loc],
-                name="inv_" + i + "_" + str(t_loc)
-            )
-            m.addConstr(p[i, t_loc] >= Q_min[i] * y[i, t_loc],
-                        name="minlot_" + i + "_" + str(t_loc))
-            m.addConstr(p[i, t_loc] <= BIG_M * y[i, t_loc],
-                        name="force_" + i + "_" + str(t_loc))
+            # Inventory balance
+            if i == "E2801":
+                b_prev = 0 if t_loc == 1 else b[t_loc - 1]
+                m.addConstr(
+                    q_prev + arriving + b[t_loc]
+                    == ext_demand + b_prev + q[i, t_loc],
+                    name=f"inv_{i}_{t_loc}"
+                )
+            else:
+                m.addConstr(
+                    q_prev + arriving
+                    == ind_demand + q[i, t_loc],
+                    name=f"inv_{i}_{t_loc}"
+                )
 
-            # Safety stock: inventory of E2801 must stay >= SS_E2801
-            if with_ss and i == "E2801":
-                m.addConstr(q[i, t_loc] >= SS_E2801,
-                            name="ss_E2801_" + str(t_loc))
+            # Lot sizing
+            m.addConstr(p[i, t_loc] >= Q_min[i] * y[i, t_loc])
+            m.addConstr(p[i, t_loc] <= BIG_M * y[i, t_loc])
 
-    # --- Capacity with overtime + fixed modernization ---
+            # Safety stock (only if feasible)
+            if with_ss and i == "E2801" and t_loc > LT[i]:
+                m.addConstr(q[i, t_loc] >= SS_E2801)
+
+    # --- Capacity ---
     for t_loc in periods_local:
         m.addConstr(
-            p["E2801", t_loc] <= CAP_X + dx_fix + ox[t_loc],
-            name="cap_X_" + str(t_loc)
+            p["E2801", t_loc] <= CAP_X + dx_fix + ox[t_loc]
         )
         m.addConstr(
             PROC_Y["B1401"] * p["B1401", t_loc]
             + PROC_Y["B2302"] * p["B2302", t_loc]
-            <= CAP_Y + (CAP_Y / 100.0) * dy_fix + oy[t_loc],
-            name="cap_Y_" + str(t_loc)
+            <= CAP_Y + (CAP_Y / 100.0) * dy_fix + oy[t_loc]
         )
 
     m.optimize()
 
     if m.Status not in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
         raise RuntimeError(
-            f"Window starting at {window_start} infeasible. "
-            f"Gurobi status: {m.Status}"
+            f"Window starting at {window_start} infeasible (status {m.Status})"
         )
 
-    p_sol  = {t: {i: int(round(p[i, t].X))  for i in parts} for t in periods_local}
-    y_sol  = {t: {i: int(round(y[i, t].X))  for i in parts} for t in periods_local}
+    # --- Extract solution ---
+    p_sol  = {t: {i: int(round(p[i, t].X)) for i in parts} for t in periods_local}
+    y_sol  = {t: {i: int(round(y[i, t].X)) for i in parts} for t in periods_local}
     ox_sol = {t: float(ox[t].X) for t in periods_local}
     oy_sol = {t: float(oy[t].X) for t in periods_local}
 
     return p_sol, y_sol, ox_sol, oy_sol
-
 
 # =============================================================================
 # MAIN: Rolling Horizon simulation
