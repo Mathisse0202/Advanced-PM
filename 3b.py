@@ -75,9 +75,3 @@ write_excel("Assignment_3b_output.xlsx", {
     "Inventory Simulation": df_inventory,
 })
 
-# Na m.optimize(), print de ruwe waarden
-for t in periods:
-    if oy[t].X > 0.01:
-        print(f"W{t}: oy={oy[t].X:.4f} min = {oy[t].X/60:.4f} h, cost={120*(oy[t].X/60):.4f}")
-print(f"Som oy minuten: {sum(oy[t].X for t in periods):.4f}")
-print(f"OT_Y cost exact: {120 * sum(oy[t].X for t in periods) / 60:.4f}")
