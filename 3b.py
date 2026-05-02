@@ -5,7 +5,6 @@ data = load_data("input_data.json")
 parts, periods, LT, BOM, parents = data["parts"], data["periods"], data["LT"], data["BOM"], data["parents"]
 parts_ordered = ["B1401", "B2302", "B3201", "B4702", "V1501", "V6302", "E2801"]
 
-# Solve 3a on forecast
 m, p, q, y, _ = build_base_model(data, data["D_fcst"], "Assignment_3a", with_backorders=False)
 ox, oy = add_overtime_vars(m, data)
 add_capacity_with_overtime(m, p, ox, oy, data)
@@ -15,7 +14,6 @@ m.addConstr(sum(oy[t] for t in periods) <= 3155.0, name="fix_oy_total")
 m.optimize()
 p_star = {(i, t): int(round(p[i, t].X)) for i in parts for t in periods}
 
-# Simulate on realized demand
 q_sim, b_sim = {}, {t: 0 for t in periods}
 for t in periods:
     for i in parts_ordered:
@@ -31,12 +29,11 @@ for t in periods:
         else:
             q_sim[(i, t)] = max(0, q_prev + arriving - ind_dem)
 
-# Service metrics
+
 service_level = 1 - sum(1 for t in periods if b_sim[t] > 0.5) / len(periods)
 new_bo        = sum(max(0, b_sim[t] - (b_sim[t-1] if t > 1 else 0)) for t in periods)
 fill_rate     = 1 - new_bo / sum(data["D_real"])
 
-# Costs — overtime Y: sum minutes first, then convert to hours (matches model objective)
 setup_cost      = sum(data["SC"][i] * round(y[i, t].X) for i in parts for t in periods)
 holding_cost    = sum(data["HC"][i] * q_sim[(i, t)] for i in parts for t in periods)
 backorder_cost  = sum(data["BO_COST"] * b_sim[t] for t in periods)
@@ -50,7 +47,6 @@ print(f"Service level: {service_level:.4f}  |  Fill rate: {fill_rate:.4f}")
 print(f"Setup: {setup_cost:.2f}  Holding: {holding_cost:.2f}  OT_X: {overtime_cost_x:.2f}  OT_Y: {overtime_cost_y:.2f}  BO: {backorder_cost:.2f}")
 print(f"TOTAL: {total_cost:.2f}")
 
-# Excel output
 df_summary = pd.DataFrame({
     "Metric": ["demand_type", "setup_cost", "holding_cost", "overtime_cost_X",
                "overtime_cost_Y", "total_overtime_cost", "backorder_cost",
@@ -74,4 +70,3 @@ write_excel("Assignment_3b_output.xlsx", {
     "Production Plan":      df_production,
     "Inventory Simulation": df_inventory,
 })
-
