@@ -29,10 +29,6 @@ from utils import (
     write_excel, print_cost_summary,
 )
 
-
-# -----------------------------------------------------------------------------
-# Load 5aFUNCTION.py
-# -----------------------------------------------------------------------------
 def load_assignment_5a_module():
     module_path = Path(__file__).with_name("5aFUNCTION.py")
     spec = importlib.util.spec_from_file_location("assignment5a_module", module_path)
@@ -44,10 +40,6 @@ def load_assignment_5a_module():
     spec.loader.exec_module(module)
     return module
 
-
-# -----------------------------------------------------------------------------
-# Step 1: solve 5a and retrieve the fixed plan
-# -----------------------------------------------------------------------------
 assignment5a = load_assignment_5a_module()
 
 plan_5a = assignment5a.solve_5a_plan(
@@ -78,10 +70,6 @@ MOD_COST_PCT_Y = data["MOD_COST_PCT_Y"]
 CAP_X          = data["CAP_X"]
 CAP_Y          = data["CAP_Y"]
 
-
-# -----------------------------------------------------------------------------
-# Step 2: evaluate the fixed 5a plan under realized demand
-# -----------------------------------------------------------------------------
 m, p, q, y, b = build_base_model(
     data, D_real, "Assignment_5b", with_backorders=True
 )
@@ -92,17 +80,13 @@ dx, dy = add_modernization_vars(m, data)
 set_combined_objective(m, p, q, y, ox, oy, dx, dy, b, data, with_backorders=True)
 add_capacity_combined(m, p, ox, oy, dx, dy, data)
 
-# Make constraint names available for lookup
 m.update()
 
-# Remove final-backorder-clearing constraint.
-# In 5b we evaluate a fixed 5a plan, so backlog may remain at the end.
 c_final_bo = m.getConstrByName("no_final_backorder")
 if c_final_bo is not None:
     m.remove(c_final_bo)
     m.update()
 
-# Fix all decisions from 5a
 for i in parts:
     for t in periods:
         m.addConstr(p[i, t] == p_fix[i, t], name="fix_p_" + i + "_" + str(t))
@@ -117,10 +101,6 @@ m.addConstr(dy == dy_fix, name="fix_dy")
 
 m.optimize()
 
-
-# -----------------------------------------------------------------------------
-# Results
-# -----------------------------------------------------------------------------
 if m.Status in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
 
     # Cost components
@@ -165,7 +145,6 @@ if m.Status in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
     print("  Service Level      :  " + "{:.2%}".format(service_level))
     print("  Fill Rate          :  " + "{:.2%}".format(fill_rate))
 
-    # Overtime schedule
     ot_rows = []
     for t in periods:
         ot_rows.append({
@@ -178,7 +157,6 @@ if m.Status in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
         })
     df_ot = pd.DataFrame(ot_rows).set_index("Period")
 
-    # Summary metrics
     summary_rows = [
         {"Metric": "Setup Cost (EUR)",            "Value": round(total_setup, 2)},
         {"Metric": "Holding Cost (EUR)",          "Value": round(total_holding, 2)},
@@ -204,7 +182,6 @@ if m.Status in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
     df_dem_fcst = demand_row_df(D_fcst, periods, label="Forecast Demand E2801")
     df_dem_real = demand_row_df(D_real, periods, label="Realized Demand E2801")
 
-    # Backorders per period
     bo_row = {"Part": "Backorder E2801"}
     for t in periods:
         bo_row["W" + str(t)] = int(round(b[t].X))

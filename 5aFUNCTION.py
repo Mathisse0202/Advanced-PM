@@ -29,18 +29,6 @@ from utils import (
 
 
 def solve_5a_plan(write_output=True, output_filename="output_5a.xlsx", print_summary=True):
-    """
-    Solve Assignment 5a and return the fixed plan.
-
-    Returns a dictionary containing:
-    - data, parts, periods, D_fcst
-    - fixed production/setup/overtime/modernization decisions
-    - reporting tables
-    """
-
-    # -------------------------------------------------------------------------
-    # Data
-    # -------------------------------------------------------------------------
     data           = load_data()
     parts          = data["parts"]
     periods        = data["periods"]
@@ -52,9 +40,6 @@ def solve_5a_plan(write_output=True, output_filename="output_5a.xlsx", print_sum
     CAP_X          = data["CAP_X"]
     CAP_Y          = data["CAP_Y"]
 
-    # -------------------------------------------------------------------------
-    # Model
-    # -------------------------------------------------------------------------
     m, p, q, y, _ = build_base_model(
         data, demand, "Assignment_5a", with_backorders=False
     )
@@ -70,9 +55,6 @@ def solve_5a_plan(write_output=True, output_filename="output_5a.xlsx", print_sum
     if m.Status not in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
         raise RuntimeError("5a model not solved. Gurobi status: " + str(m.Status))
 
-    # -------------------------------------------------------------------------
-    # Cost components
-    # -------------------------------------------------------------------------
     total_ot_x   = sum(OT_COST_X * ox[t].X for t in periods)
     total_ot_y   = sum(OT_COST_Y * (oy[t].X / 60.0) for t in periods)
     mod_cost_x   = MOD_COST_X * dx.X
@@ -104,9 +86,6 @@ def solve_5a_plan(write_output=True, output_filename="output_5a.xlsx", print_sum
         print("  New capacity WS-Y  :  " + "{:.1f}".format(new_cap_y) + " min/week")
         print("  Total Cost         : EUR " + "{:,.2f}".format(total_cost))
 
-    # -------------------------------------------------------------------------
-    # Overtime schedule
-    # -------------------------------------------------------------------------
     ot_rows = []
     for t in periods:
         ot_rows.append({
@@ -119,9 +98,6 @@ def solve_5a_plan(write_output=True, output_filename="output_5a.xlsx", print_sum
         })
     df_ot = pd.DataFrame(ot_rows).set_index("Period")
 
-    # -------------------------------------------------------------------------
-    # Summary metrics
-    # -------------------------------------------------------------------------
     summary_rows = [
         {"Metric": "Setup Cost (EUR)",            "Value": round(total_setup, 2)},
         {"Metric": "Holding Cost (EUR)",          "Value": round(total_holding, 2)},
@@ -152,9 +128,6 @@ def solve_5a_plan(write_output=True, output_filename="output_5a.xlsx", print_sum
             "Setup Decisions": df_setup,
         })
 
-    # -------------------------------------------------------------------------
-    # Fixed plan to reuse in 5b
-    # -------------------------------------------------------------------------
     p_fix = {(i, t): int(round(p[i, t].X)) for i in parts for t in periods}
     y_fix = {(i, t): int(round(y[i, t].X)) for i in parts for t in periods}
     ox_fix = {t: float(ox[t].X) for t in periods}
