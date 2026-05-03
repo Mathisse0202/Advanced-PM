@@ -1,60 +1,3 @@
-"""
-Assignment 6
-============
-Handling demand uncertainty: Rolling Horizon with Safety Stock.
-
-APPROACH RATIONALE
-------------------
-In 5b, the fixed 5a plan (optimized on forecasts) causes backorders in
-weeks 26 and 30, with a total backorder cost of EUR 37,250. The root
-cause is that realized demand systematically exceeds forecasts over the
-30-week horizon (total surplus: +110 units), and the plan has no
-mechanism to react once production decisions are locked in.
-
-Two improvements are combined:
-
-1. ROLLING HORIZON (RH)
-   Instead of solving once for all 30 weeks and freezing the plan, we
-   re-optimize every R periods using the most recent demand information.
-   Only the first R periods of each solution are executed (frozen);
-   then we re-solve with updated data.
-   - The "look-ahead" window W is kept at 30 - t + 1 (full remaining
-     horizon), so the optimizer always sees the long-term consequences.
-   - Re-solving allows the plan to absorb forecast errors period by period.
-
-2. SAFETY STOCK (SS) for E2801
-   Even within a rolling horizon there is residual uncertainty because
-   we still plan against forecasts for future periods. Adding a minimum
-   inventory buffer (safety stock) for the end product guarantees that
-   small positive demand surprises are absorbed from stock rather than
-   becoming backorders.
-
-   SS = z * sigma_e * sqrt(LT_E2801 + 1)
-      = 1.645 * 24.9 * sqrt(2)  ≈  58 units   (95% service level target)
-
-   This is implemented as a lower bound on q[E2801, t] for each period.
-
-WHY THESE TWO AND NOT OTHERS?
-- Safety stock alone cannot fix large consecutive surprises (W26 cumulative
-  drift); the rolling horizon handles that.
-- Rolling horizon alone with no buffer still leaves the plan vulnerable
-  to within-window surprises (SS fixes that).
-- Stochastic programming / scenario trees would be theoretically superior
-  but require probability distributions that are not given; the empirical
-  error std (24.9 units) is sufficient for a safety-stock calculation.
-- The combination is implementable within the existing Gurobi framework
-  with minimal changes.
-
-PARAMETERS (can be tuned)
---------------------------
-  RH_FREQ  : re-planning frequency (periods between re-solves); default = 5
-  SS_E2801 : safety stock for E2801; default = 58 units (95% CSL)
-
-OUTPUT
-------
-  output_6.xlsx  — same sheet structure as 5b, plus a "Method Summary" sheet.
-"""
-
 import math
 import numpy as np
 import pandas as pd
@@ -73,10 +16,8 @@ import gurobipy as gp
 # =============================================================================
 # TUNABLE PARAMETERS
 # =============================================================================
-RH_FREQ  = 13   # Re-plan every RH_FREQ periods
-SS_E2801 = 42   # Safety stock for E2801 (units); based on 95% CSL
-
-
+RH_FREQ  = 13   
+SS_E2801 = 42   
 # =============================================================================
 # HELPER: solve one rolling-horizon window
 # =============================================================================
@@ -111,7 +52,6 @@ def solve_window(data, demand_window, I0_window, T_window,
     m.setParam("OutputFlag", 0)
     m.setParam("MIPGap", 1e-4)
 
-    # --- Variables ---
     p  = m.addVars(parts, periods_local, name="p", lb=0.0, vtype=GRB.INTEGER)
     q  = m.addVars(parts, periods_local, name="q", lb=0.0, vtype=GRB.INTEGER)
     y  = m.addVars(parts, periods_local, name="y", vtype=GRB.BINARY)
@@ -120,7 +60,6 @@ def solve_window(data, demand_window, I0_window, T_window,
     ox = m.addVars(periods_local, name="ox", lb=0.0, ub=OT_MAX_X, vtype=GRB.INTEGER)
     oy = m.addVars(periods_local, name="oy", lb=0.0, ub=OT_MAX_Y)
 
-    # --- Objective ---
     obj = (
         gp.quicksum(SC[i] * y[i, t] + HC[i] * q[i, t]
                     for i in parts for t in periods_local)
@@ -130,15 +69,12 @@ def solve_window(data, demand_window, I0_window, T_window,
     )
     m.setObjective(obj, GRB.MINIMIZE)
 
-    # --- Constraints ---
     for i in parts:
         for t_loc in periods_local:
             t_abs = window_start + t_loc - 1
 
-            # Previous inventory
             q_prev = I0_window[i] if t_loc == 1 else q[i, t_loc - 1]
 
-            # Arrivals
             t_order_abs = t_abs - LT[i]
             t_order_loc = t_order_abs - window_start + 1
 
@@ -149,7 +85,6 @@ def solve_window(data, demand_window, I0_window, T_window,
             else:
                 arriving = p[i, t_order_loc]
 
-            # Demand
             ext_demand = demand_window[t_loc - 1] if i == "E2801" else 0
 
             ind_demand = (
@@ -157,7 +92,6 @@ def solve_window(data, demand_window, I0_window, T_window,
                 if i in parents else 0
             )
 
-            # Inventory balance
             if i == "E2801":
                 b_prev = 0 if t_loc == 1 else b[t_loc - 1]
                 m.addConstr(
@@ -172,15 +106,12 @@ def solve_window(data, demand_window, I0_window, T_window,
                     name=f"inv_{i}_{t_loc}"
                 )
 
-            # Lot sizing
             m.addConstr(p[i, t_loc] >= Q_min[i] * y[i, t_loc])
             m.addConstr(p[i, t_loc] <= BIG_M * y[i, t_loc])
 
-            # Safety stock (only if feasible)
             if with_ss and i == "E2801" and t_loc > LT[i]:
                 m.addConstr(q[i, t_loc] >= SS_E2801)
 
-    # --- Capacity ---
     for t_loc in periods_local:
         m.addConstr(
             p["E2801", t_loc] <= CAP_X + dx_fix + ox[t_loc]
@@ -198,7 +129,6 @@ def solve_window(data, demand_window, I0_window, T_window,
             f"Window starting at {window_start} infeasible (status {m.Status})"
         )
 
-    # --- Extract solution ---
     p_sol  = {t: {i: int(round(p[i, t].X)) for i in parts} for t in periods_local}
     y_sol  = {t: {i: int(round(y[i, t].X)) for i in parts} for t in periods_local}
     ox_sol = {t: float(ox[t].X) for t in periods_local}
@@ -227,10 +157,6 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
     CAP_X          = data["CAP_X"]
     CAP_Y          = data["CAP_Y"]
 
-    # ------------------------------------------------------------------
-    # Step 1: Solve 5a once to get the optimal modernization investment
-    # (dx, dy). Overtime decisions will be re-optimized each window.
-    # ------------------------------------------------------------------
     print("\n" + "=" * 70)
     print("  ASSIGNMENT 6 — Rolling Horizon + Safety Stock")
     print("  Step 1: Determining optimal modernization via 5a model...")
@@ -250,31 +176,24 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
     print(f"  Modernization fixed: WS-X +{dx_fix:.0f} units, WS-Y +{dy_fix:.4f}%")
     print(f"  (Modernization cost: EUR {MOD_COST_X*dx_fix + MOD_COST_PCT_Y*dy_fix:,.2f})")
 
-    # ------------------------------------------------------------------
-    # Step 2: Rolling horizon simulation using REALIZED demand to
-    # evaluate, but FORECAST demand to plan future periods.
-    # ------------------------------------------------------------------
+
     print(f"\n  Step 2: Rolling Horizon (replan every {rh_freq} period(s), "
           f"SS={ss} units)...")
 
-    # Tracking structures
-    p_executed  = {}   # (part, abs_period) -> qty actually produced
-    y_executed  = {}   # (part, abs_period) -> 0/1
-    ox_executed = {}   # abs_period -> float
-    oy_executed = {}   # abs_period -> float
-    inv_real    = {}   # (part, abs_period) -> inventory under realized demand
-    bo_real     = {}   # abs_period -> backorder of E2801
+    p_executed  = {}   
+    y_executed  = {}   
+    ox_executed = {}   
+    oy_executed = {}   
+    inv_real    = {}   
+    bo_real     = {}   
 
-    # Starting inventory
     I0_current = {i: data["I0"][i] for i in parts}
 
     t = 1
     while t <= T:
-        # Determine the window to plan
         window_start = t
-        T_window     = T - t + 1   # look ahead to end of horizon
+        T_window     = T - t + 1   
 
-        # Forecast for this window (future is still uncertain -> use D_fcst)
         demand_window = D_fcst[t - 1:]
 
         if print_summary:
@@ -296,38 +215,31 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
             with_ss        = (ss > 0),
         )
 
-        # Execute the first rh_freq periods (or fewer at end of horizon)
         n_execute = min(rh_freq, T_window)
 
         for t_loc in range(1, n_execute + 1):
             t_abs = window_start + t_loc - 1
 
-            # Record production / setup / overtime decisions
             for i in parts:
                 p_executed[i, t_abs] = p_sol[t_loc][i]
                 y_executed[i, t_abs] = y_sol[t_loc][i]
             ox_executed[t_abs] = ox_sol[t_loc]
             oy_executed[t_abs] = oy_sol[t_loc]
 
-        # Now compute ACTUAL inventory under realized demand for the
-        # executed periods.  We need to walk through period by period
-        # because inventory depends on what actually arrived (based on
-        # lead times and executed production).
+
         for t_loc in range(1, n_execute + 1):
             t_abs = window_start + t_loc - 1
 
             for i in parts:
-                # Inventory carried from previous period (or t=0)
+
                 if t_abs == 1:
                     q_prev_r = data["I0"][i]
                 else:
                     q_prev_r = inv_real.get((i, t_abs - 1), 0)
 
-                # Production ordered LT[i] periods ago arrives now
                 t_order_abs = t_abs - data["LT"][i]
                 arriving = p_executed.get((i, t_order_abs), 0) if t_order_abs >= 1 else 0
 
-                # Demand
                 ext_demand = D_real[t_abs - 1] if i == "E2801" else 0
                 ind_demand = sum(
                     data["BOM"][j][i] * p_executed.get((j, t_abs), 0)
@@ -347,16 +259,12 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
                 else:
                     inv_real[i, t_abs] = max(0, q_prev_r + arriving - ext_demand - ind_demand)
 
-        # Update starting inventory for next re-plan
         last_exec = window_start + n_execute - 1
         for i in parts:
             I0_current[i] = inv_real.get((i, last_exec), 0)
 
         t += n_execute
 
-    # ------------------------------------------------------------------
-    # Step 3: Compute costs under realized demand
-    # ------------------------------------------------------------------
     mod_cost_x = MOD_COST_X * dx_fix
     mod_cost_y = MOD_COST_PCT_Y * dy_fix
 
@@ -385,7 +293,6 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
         + total_bo
     )
 
-    # Service level & fill rate
     bo_vals = {t: bo_real.get(t, 0) for t in periods}
     periods_with_bo = sum(1 for t in periods if bo_vals[t] > 0.5)
     service_level   = 1.0 - periods_with_bo / len(periods)
@@ -399,11 +306,7 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
     new_cap_x = CAP_X + dx_fix
     new_cap_y = CAP_Y * (1.0 + dy_fix / 100.0)
 
-    # ------------------------------------------------------------------
-    # Step 4: Build output DataFrames
-    # ------------------------------------------------------------------
 
-    # Cost per part
     rows = []
     for i in parts:
         s  = sum(data["SC"][i] * y_executed.get((i, t), 0) for t in periods)
@@ -432,7 +335,6 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
     rows.append(total_row)
     df_cost = pd.DataFrame(rows).set_index("Part")
 
-    # Summary
     summary_rows = [
         {"Metric": "Setup Cost (EUR)",            "Value": round(total_setup, 2)},
         {"Metric": "Holding Cost (EUR)",          "Value": round(total_holding, 2)},
@@ -453,7 +355,6 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
     ]
     df_summary = pd.DataFrame(summary_rows).set_index("Metric")
 
-    # Production plan
     prod_rows = []
     for i in parts:
         row = {"Part": i}
@@ -462,7 +363,6 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
         prod_rows.append(row)
     df_prod = pd.DataFrame(prod_rows).set_index("Part")
 
-    # Inventory plan
     inv_rows = []
     for i in parts:
         row = {"Part": i}
@@ -471,7 +371,6 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
         inv_rows.append(row)
     df_inv = pd.DataFrame(inv_rows).set_index("Part")
 
-    # Setup decisions
     setup_rows = []
     for i in parts:
         row = {"Part": i}
@@ -480,13 +379,11 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
         setup_rows.append(row)
     df_setup = pd.DataFrame(setup_rows).set_index("Part")
 
-    # Backorders
     bo_row = {"Part": "Backorder E2801"}
     for t in periods:
         bo_row["W" + str(t)] = int(round(bo_real.get(t, 0)))
     df_bo = pd.DataFrame([bo_row]).set_index("Part")
 
-    # Overtime
     ot_rows = []
     for t in periods:
         ox_t = ox_executed.get(t, 0)
@@ -501,42 +398,9 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
         })
     df_ot = pd.DataFrame(ot_rows).set_index("Period")
 
-    # Demand rows
     df_dem_fcst = demand_row_df(D_fcst, periods, label="Forecast Demand E2801")
     df_dem_real = demand_row_df(D_real, periods, label="Realized Demand E2801")
 
-    # Method summary
-    method_rows = [
-        {"Item": "Method",
-         "Description": f"Rolling Horizon (re-plan every {rh_freq} period(s)) "
-                        f"+ Safety Stock (SS={ss} units for E2801)"},
-        {"Item": "Why Rolling Horizon",
-         "Description": "Re-optimizing regularly absorbs forecast errors by "
-                        "updating plans with actual inventory levels, preventing "
-                        "the demand drift that caused backorders in week 26 & 30 in 5b."},
-        {"Item": "Why Safety Stock",
-         "Description": f"Within each window, future demand is still uncertain. "
-                        f"SS={ss} units (≈95% CSL, based on sigma_error={24.9:.1f}) "
-                        "buffers small within-window surprises without incurring backorders."},
-        {"Item": "Modernization",
-         "Description": f"Fixed from 5a: WS-X +{dx_fix:.0f} units, WS-Y +{dy_fix:.4f}%. "
-                        f"One-time cost EUR {mod_cost_x+mod_cost_y:,.2f}."},
-        {"Item": "Overtime",
-         "Description": "Re-optimized every window, so overtime is only used "
-                        "when truly needed given actual inventory state."},
-        {"Item": "5b Total Cost (EUR)",   "Description": str(553686.60)},
-        {"Item": "6  Total Cost (EUR)",   "Description": str(round(total_cost, 2))},
-        {"Item": "Cost improvement (EUR)","Description": str(round(553686.60 - total_cost, 2))},
-        {"Item": "5b Service Level",      "Description": "93.33%"},
-        {"Item": "6  Service Level",      "Description": f"{service_level:.2%}"},
-        {"Item": "5b Fill Rate",          "Description": "97.52%"},
-        {"Item": "6  Fill Rate",          "Description": f"{fill_rate:.2%}"},
-    ]
-    df_method = pd.DataFrame(method_rows).set_index("Item")
-
-    # ------------------------------------------------------------------
-    # Step 5: Print + write
-    # ------------------------------------------------------------------
     if print_summary:
         print("\n" + "=" * 70)
         print("  ASSIGNMENT 6 — Rolling Horizon + Safety Stock — RESULTS")
@@ -560,7 +424,6 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
         print(f"    Improvement     : EUR {553686.60 - total_cost:>12,.2f}")
 
     write_excel(output_filename, {
-        "Method Summary":   df_method,
         "Summary":          df_summary,
         "Cost per Part":    df_cost,
         "Overtime":         df_ot,
