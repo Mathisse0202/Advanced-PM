@@ -1,22 +1,6 @@
-"""
-Assignment 1b - Impact of Realized Demand and Backordering on Production Plan
-
-Logic:
-- Reuse the production plan from Assignment 1a
-- Keep setup costs unchanged
-- Keep intermediate-component holding costs unchanged
-- Recalculate only E2801 inventory under realized demand
-- Add backorder cost
-- Compute fill rate and service level
-"""
-
 import json
 import pandas as pd
 
-
-# =============================================================================
-# 1. LOAD INPUT DATA
-# =============================================================================
 
 with open("input_data.json", "r") as f:
     data = json.load(f)
@@ -30,30 +14,19 @@ BO_COST = data["backorder_cost_per_unit_per_period"]
 D_real = data["demand_realized"]
 
 
-# =============================================================================
-# 2. READ ASSIGNMENT 1A OUTPUT
-# =============================================================================
-
 file_1a = "output_assignment1a.xlsx"
 
 df_prod = pd.read_excel(file_1a, sheet_name="Production Plan", index_col=0)
 df_cost = pd.read_excel(file_1a, sheet_name="Cost Summary", index_col=0)
 
-# 1A production plan for the final product
 prod_e2801 = [float(df_prod.loc["E2801", f"W{t}"]) for t in periods]
 
-# Costs from 1A
 setup_cost_1a = float(df_cost.loc["TOTAL", "Setup Cost (EUR)"])
 holding_cost_total_1a = float(df_cost.loc["TOTAL", "Holding Cost (EUR)"])
 holding_cost_e2801_1a = float(df_cost.loc["E2801", "Holding Cost (EUR)"])
 
-# Holding cost of all other parts remains unchanged
 holding_cost_other_parts = holding_cost_total_1a - holding_cost_e2801_1a
 
-
-# =============================================================================
-# 3. SIMULATE E2801 UNDER REALIZED DEMAND
-# =============================================================================
 
 initial_inventory = I0["E2801"]
 lead_time_e2801 = LT["E2801"]
@@ -70,16 +43,12 @@ prev_inventory = initial_inventory
 prev_backorder = 0.0
 
 for t in periods:
-    # Arrivals in period t depend on the 1A production plan and lead time
     t_order = t - lead_time_e2801
     arrivals = prod_e2801[t_order - 1] if t_order >= 1 else 0.0
     arrivals_list.append(arrivals)
 
-    # Inventory balance with backorders
-    # available = inventory carried over + arrivals
     available = prev_inventory + arrivals
 
-    # Meet previous backorders first
     if available >= prev_backorder:
         available_after_old_bo = available - prev_backorder
         remaining_old_bo = 0.0
@@ -87,7 +56,6 @@ for t in periods:
         available_after_old_bo = 0.0
         remaining_old_bo = prev_backorder - available
 
-    # Meet current realized demand
     current_demand = D_real[t - 1]
 
     if available_after_old_bo >= current_demand:
@@ -111,10 +79,6 @@ for t in periods:
     prev_backorder = backorder_t
 
 
-# =============================================================================
-# 4. KPI CALCULATIONS
-# =============================================================================
-
 new_holding_cost_e2801 = sum(holding_cost_e2801_list)
 new_total_holding_cost = holding_cost_other_parts + new_holding_cost_e2801
 total_backorder_cost = sum(backorder_cost_list)
@@ -123,17 +87,11 @@ new_total_cost = setup_cost_1a + new_total_holding_cost + total_backorder_cost
 total_realized_demand = sum(D_real)
 total_backorder_units = sum(ending_backorder)
 
-# Fill rate = demand delivered on time / total realized demand
 fill_rate = sum(delivered_on_time_list) / total_realized_demand
 
-# Service level = fraction of periods without end-of-period backorder
 periods_without_backorder = sum(1 for b in ending_backorder if b == 0)
 service_level = periods_without_backorder / T
 
-
-# =============================================================================
-# 5. PRINT RESULTS
-# =============================================================================
 
 print("\n" + "=" * 70)
 print("ASSIGNMENT 1B - REALIZED DEMAND WITH BACKORDERS")
@@ -149,10 +107,6 @@ print(f"Fill Rate                       : {fill_rate:.4f}")
 print(f"Total Backorder Units           : {total_backorder_units:,.1f}")
 print("=" * 70)
 
-
-# =============================================================================
-# 6. WRITE OUTPUT TO EXCEL
-# =============================================================================
 
 df_summary = pd.DataFrame([
     {"Metric": "Setup Cost (EUR)", "Value": round(setup_cost_1a, 2)},
