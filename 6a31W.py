@@ -9,20 +9,14 @@ from utils import (
 )
 
 def extend_demand(demand_30, label="forecast"):
-    """
-    Append week 31 = average(W25..W30) to a 30-week demand list.
-    Returns a 31-element list and the W31 value.
-    """
+    
     avg_w31 = round(sum(demand_30[24:30]) / 6)
     print(f"  W31 ({label}): avg(W25..W30) = {sum(demand_30[24:30])/6:.2f} -> {avg_w31}")
     return demand_30 + [avg_w31], avg_w31
 
 
 def patch_data_for_31_weeks(data):
-    """
-    Return a modified data dict with T=31 and both demand lists extended.
-    The original data dict is NOT mutated.
-    """
+    
     import copy
     d = copy.deepcopy(data)
     d["T"]       = 31
@@ -33,16 +27,13 @@ def patch_data_for_31_weeks(data):
 
 
 def slice_df_to_30(df):
-    """Keep only columns W1..W30 from a wide DataFrame."""
+    
     cols_30 = ["W" + str(t) for t in range(1, 31)]
     return df[[c for c in cols_30 if c in df.columns]]
 
 
 def slice_cost_over_30(p, q, y, data30):
-    """
-    Compute setup + holding costs using only periods 1..30.
-    Returns (rows_list, total_setup, total_holding).
-    """
+    
     parts   = data30["parts"]
     periods = data30["periods"]   
     SC      = data30["SC"]
@@ -71,14 +62,7 @@ def slice_cost_over_30(p, q, y, data30):
 def solve_6a_plan(write_output=True,
                   output_filename="output_6a.xlsx",
                   print_summary=True):
-    """
-    Identical to 5a but with T=31 (phantom week 31 added).
-    Only weeks 1-30 are reported in output and used for cost comparison.
-
-    Returns the same dict structure as solve_5a_plan() so that solve_6b()
-    can consume it without any changes.
-    """
-
+    
     data30 = load_data()
     data31 = patch_data_for_31_weeks(data30)
 

@@ -13,14 +13,9 @@ from utils import (
 import gurobipy as gp
 
 
-# =============================================================================
-# TUNABLE PARAMETERS
-# =============================================================================
+
 RH_FREQ  = 13   
 SS_E2801 = 42   
-# =============================================================================
-# HELPER: solve one rolling-horizon window
-# =============================================================================
 def solve_window(data, demand_window, I0_window, T_window,
                  dx_fix, dy_fix, ox_fix_dict, oy_fix_dict,
                  frozen_p, frozen_y, window_start,
@@ -136,9 +131,6 @@ def solve_window(data, demand_window, I0_window, T_window,
 
     return p_sol, y_sol, ox_sol, oy_sol
 
-# =============================================================================
-# MAIN: Rolling Horizon simulation
-# =============================================================================
 
 def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
             output_filename="output_6.xlsx", print_summary=True):
@@ -442,9 +434,6 @@ def solve_6(rh_freq=RH_FREQ, ss=SS_E2801,
     }
 
 
-# =============================================================================
-# Demand row helper (not imported from utils to keep self-contained)
-# =============================================================================
 
 def demand_row_df(demand, periods, label):
     row = {"Part": label}
@@ -453,9 +442,6 @@ def demand_row_df(demand, periods, label):
     return pd.DataFrame([row]).set_index("Part")
 
 
-# =============================================================================
-# Entry point
-# =============================================================================
 
 if __name__ == "__main__":
     solve_6(

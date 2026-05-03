@@ -1,20 +1,3 @@
-"""
-Assignment 5b
-=============
-Finite capacity, realized demand.
-Evaluate the fixed plan from Assignment 5a.
-
-The fixed 5a plan contains:
-  - production quantities p[i,t]
-  - setup decisions y[i,t]
-  - weekly overtime ox[t], oy[t]
-  - permanent modernization dx, dy
-
-Backorders are allowed and charged at EUR 250 per unit per period.
-
-Output: output_5b.xlsx
-"""
-
 import importlib.util
 from pathlib import Path
 

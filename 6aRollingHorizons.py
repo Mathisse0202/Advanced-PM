@@ -1,48 +1,3 @@
-"""
-rolling_horizon.py
-==================
-Rolling-horizon production planning MIP for the APM project.
-
-This file is compatible with the current project structure:
-- data is loaded via utils.load_data()
-- BOM is the nested BOM from utils.py
-- production released in week t arrives in week t + LT[i]
-- backorders are tracked only for E2801
-- component shortfalls are not allowed
-- dx is integer, as in Assignment 5
-- dy is discretized using MOD_INCR_Y / MOD_COST_PCT_Y
-- rolling horizon can be compared against the fixed 5a plan
-
-Main rolling-horizon logic
---------------------------
-At every rolling step:
-1. solve a window MIP
-2. commit only the frozen period(s)
-3. update inventory with realized demand in realized mode
-4. carry the pipeline and backlog forward
-
-Backlog handling
-----------------
-For normal rolling windows, backlog is forced to be zero at the end of the
-window. In the final tail of the horizon, this hard constraint is relaxed only
-from DEFAULT_TAIL_RELAX_START onward, because lead times can make full recovery
-physically impossible. Terminal backlog is still penalized strongly.
-
-Typical use
------------
-Compare fixed 5a vs rolling horizon under realized demand:
-
-    python rolling_horizon.py --compare-5a --mode realized --window 15 --frozen 1
-
-Try a longer look-ahead:
-
-    python rolling_horizon.py --compare-5a --mode realized --window 20 --frozen 1
-
-Sensitivity analysis:
-
-    python rolling_horizon.py --sensitivity --mode realized
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -56,10 +11,6 @@ from gurobipy import GRB
 
 from utils import load_data, write_excel
 
-
-# =============================================================================
-# DEFAULT SETTINGS
-# =============================================================================
 
 DEFAULT_PLANNING_BO_MULTIPLIER = 100.0
 DEFAULT_TERMINAL_BO_MULTIPLIER = 10.0
@@ -78,10 +29,6 @@ _REQUIRED_DATA_KEYS = [
 ]
 
 
-# =============================================================================
-# DATA CHECK
-# =============================================================================
-
 def _validate_data(data: dict) -> None:
     """Check that utils.load_data() returns all keys used in this file."""
     missing = [k for k in _REQUIRED_DATA_KEYS if k not in data]
@@ -93,9 +40,6 @@ def _validate_data(data: dict) -> None:
         )
 
 
-# =============================================================================
-# REPORTING HELPERS
-# =============================================================================
 
 def _wide_df(hist: dict, parts: list, periods: list, integer: bool = True) -> pd.DataFrame:
     """Convert {part: {period: value}} to a wide DataFrame."""
@@ -135,14 +79,7 @@ def _demand_df(data: dict) -> pd.DataFrame:
 
 
 def _service_metrics(backorders: dict, demand: list, periods: list) -> tuple[float, float, float]:
-    """
-    Compute:
-    - service level
-    - fill rate
-    - new backorder units
-
-    backorders[t] is the end-of-period backlog stock.
-    """
+    
     periods_with_bo = sum(1 for t in periods if backorders[t] > 0.5)
     service_level = 1.0 - periods_with_bo / len(periods)
 
@@ -163,7 +100,7 @@ def _cost_summary_df(
     inv_hist: dict,
     extra: dict | None = None,
 ) -> tuple[pd.DataFrame, float, float]:
-    """Create per-part and total cost summary."""
+
     parts = data["parts"]
     periods = data["periods"]
     sc = data["SC"]
@@ -244,10 +181,6 @@ def _utilisation_df(
 
     return pd.DataFrame(rows).set_index("Period")
 
-
-# =============================================================================
-# FINALIZE RESULTS
-# =============================================================================
 
 def _finalise(
     data: dict,
@@ -382,10 +315,6 @@ def _finalise(
     }
 
 
-# =============================================================================
-# FIXED PLAN SIMULATION
-# =============================================================================
-
 def simulate_fixed_plan(
     data: dict,
     p_plan: dict,
@@ -484,32 +413,13 @@ def simulate_fixed_plan(
     )
 
 
-# =============================================================================
-# MODERNIZATION DISCRETIZATION
-# =============================================================================
-
 def _dy_params(data: dict) -> tuple[float, int]:
-    """
-    Return:
-    - percentage-point increase per modernization increment
-    - maximum number of increments
-
-    In utils.py:
-    MOD_INCR_Y is the EUR amount per increment.
-    MOD_COST_PCT_Y is the EUR cost per 1% capacity increase.
-
-    Example:
-    15 / 1500 = 0.01%
-    """
+    
     pct_per_increment = float(data["MOD_INCR_Y"]) / float(data["MOD_COST_PCT_Y"])
     max_pct = float(data["MOD_MAX_PCT_Y"])
     max_increments = int(round(max_pct / pct_per_increment))
     return pct_per_increment, max_increments
 
-
-# =============================================================================
-# WINDOW MIP
-# =============================================================================
 
 def _solve_window(
     data: dict,
@@ -586,7 +496,6 @@ def _solve_window(
         ub=ot_max_y,
     )
 
-    # dx and dy are optimized only in the first window unless fixed from 5a.
     if dx_free:
         dx_var = m.addVar(lb=0.0, ub=mod_max_x, vtype=GRB.INTEGER, name="dx")
 
@@ -601,18 +510,7 @@ def _solve_window(
         dy_var = dy
         modernization_cost = 0.0
 
-    # Backlog policy:
-    # - forecast mode: no backlog allowed
-    # - realized mode: backlog allowed, but heavily penalized
-    # - normal rolling windows: force backlog to zero at the end of the window
-    # - final tail windows: relax the hard clear only from tail_relax_start onward
-    #
-    # Why this matters:
-    # With window=15, every window from W16 onward ends at W30.
-    # If we relax every W*-W30 window, the model starts deferring too much demand.
-    # Therefore, W16-W30 through W21-W30 still require b[30] = 0.
-    # From W22-W30 onward, the hard clear is relaxed because lead times may make
-    # b[30] = 0 infeasible.
+    
     if not allow_backorders:
         for t in window_periods:
             m.addConstr(b[t] == 0, name=f"no_backorder_{t}")
@@ -714,10 +612,6 @@ def _solve_window(
 
     return result
 
-
-# =============================================================================
-# ROLLING HORIZON SOLVER
-# =============================================================================
 
 def solve_rolling(
     mode: str = "realized",
@@ -924,10 +818,6 @@ def solve_rolling(
     return result
 
 
-# =============================================================================
-# COMPARISON AND SENSITIVITY
-# =============================================================================
-
 def compare_fixed_vs_rolling(
     fixed_result: dict,
     rolling_result: dict,
@@ -1068,10 +958,6 @@ def _print_summary(result: dict, data: dict) -> None:
     print("-" * 72)
 
 
-# =============================================================================
-# LOAD 5A PLAN
-# =============================================================================
-
 def load_5a_plan(module_path: str | None = None) -> dict:
     path = Path(module_path) if module_path else Path(__file__).with_name("5aFUNCTION.py")
 
@@ -1089,10 +975,6 @@ def load_5a_plan(module_path: str | None = None) -> dict:
         print_summary=False,
     )
 
-
-# =============================================================================
-# CLI
-# =============================================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Rolling-horizon production planner")
