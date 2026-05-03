@@ -1,15 +1,3 @@
-"""
-Assignment 2a function
-======================
-Finite capacity, forecasted demand.
-WS-X : E2801 <= 800 units/week
-WS-Y : 3*B1401 + 2*B2302 <= 10 000 min/week  (7*24*60 - 80 maintenance)
-No backorders.
-
-This file exposes solve_2a_plan(), so Assignment 2b can reuse
-the exact fixed production and setup plan from 2a.
-"""
-
 import pandas as pd
 from gurobipy import GRB
 from utils import (
@@ -20,39 +8,7 @@ from utils import (
 
 
 def solve_2a_plan(write_output=True, output_filename="output_2a.xlsx", print_summary=True):
-    """
-    Solve Assignment 2a and return the fixed production/setup plan.
 
-    Parameters
-    ----------
-    write_output : bool
-        If True, write the Excel output file.
-    output_filename : str
-        Name of the Excel file.
-    print_summary : bool
-        If True, print the cost summary.
-
-    Returns
-    -------
-    result : dict
-        Dictionary containing:
-        - data
-        - parts
-        - periods
-        - D_fcst
-        - p_fix
-        - y_fix
-        - df_cost
-        - df_util
-        - df_prod
-        - df_inv
-        - df_setup
-        - df_dem
-    """
-
-    # -------------------------------------------------------------------------
-    # Data
-    # -------------------------------------------------------------------------
     data    = load_data()
     parts   = data["parts"]
     periods = data["periods"]
@@ -61,18 +17,12 @@ def solve_2a_plan(write_output=True, output_filename="output_2a.xlsx", print_sum
     CAP_Y   = data["CAP_Y"]
     PROC_Y  = data["PROC_Y"]
 
-    # -------------------------------------------------------------------------
-    # Model
-    # -------------------------------------------------------------------------
     m, p, q, y, _ = build_base_model(data, D, "Assignment_2a", with_backorders=False)
 
     add_capacity_constraints(m, p, data)
 
     m.optimize()
 
-    # -------------------------------------------------------------------------
-    # Results
-    # -------------------------------------------------------------------------
     if m.Status not in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
         raise RuntimeError("2a model not solved. Gurobi status: " + str(m.Status))
 
@@ -81,7 +31,6 @@ def solve_2a_plan(write_output=True, output_filename="output_2a.xlsx", print_sum
     if print_summary:
         print_cost_summary("ASSIGNMENT 2a — Finite Capacity | Forecasted Demand", df_cost)
 
-    # Workstation utilisation per period
     util_rows = []
     for t in periods:
         x_used = p["E2801", t].X
@@ -111,7 +60,6 @@ def solve_2a_plan(write_output=True, output_filename="output_2a.xlsx", print_sum
             "Setup Decisions": df_setup,
         })
 
-    # Fixed 2a production quantities and setup decisions for reuse in 2b
     p_fix = {}
     y_fix = {}
     for i in parts:
