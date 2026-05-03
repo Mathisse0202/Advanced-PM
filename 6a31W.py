@@ -1,40 +1,3 @@
-"""
-Assignment 6 — Extended Horizon (Phantom Week 31)
-==================================================
-
-APPROACH
---------
-In assignment 5b, the fixed plan always drives inventory of E2801 to zero
-by the end of week 30. This means that any positive demand surprise in the
-final weeks immediately causes a backorder, because there is no buffer left.
-
-The root cause: the optimizer knows the horizon ends at T=30, so it
-rationally runs down inventory to zero. There is no incentive to hold stock
-beyond week 30.
-
-FIX: add a "phantom" week 31 with demand = average(W25..W30).
-The optimizer now needs to keep enough inventory at the end of week 30 to
-also cover (part of) week 31. This creates a natural end-of-horizon buffer
-that absorbs late demand surges.
-
-We use IDENTICAL model logic as 5a and 5b (same utils.py functions).
-The only changes are:
-  1. T is set to 31 internally.
-  2. Demand list is extended by one value (avg W25..W30).
-  3. Output reports only weeks 1..30 (week 31 phantom is excluded).
-  4. Costs are computed only over weeks 1..30.
-  5. For 6b: the fixed plan comes from 6a (this file's solve_6a_plan),
-     evaluated under realized demand (also extended to 31 weeks with
-     avg W25..W30 of the realized series).
-
-Files produced:
-  output_6a.xlsx  — 5a-equivalent, 31-week model, reporting weeks 1-30
-  output_6b.xlsx  — 5b-equivalent evaluation, reporting weeks 1-30
-
-Run:
-  python 6.py
-"""
-
 import pandas as pd
 from gurobipy import GRB
 from utils import (
@@ -44,11 +7,6 @@ from utils import (
     make_plan_df, make_setup_df, demand_row_df,
     write_excel, print_cost_summary,
 )
-
-
-# =============================================================================
-# HELPERS
-# =============================================================================
 
 def extend_demand(demand_30, label="forecast"):
     """
@@ -86,7 +44,7 @@ def slice_cost_over_30(p, q, y, data30):
     Returns (rows_list, total_setup, total_holding).
     """
     parts   = data30["parts"]
-    periods = data30["periods"]   # 1..30
+    periods = data30["periods"]   
     SC      = data30["SC"]
     HC      = data30["HC"]
 
@@ -110,10 +68,6 @@ def slice_cost_over_30(p, q, y, data30):
     return rows, total_setup, total_holding
 
 
-# =============================================================================
-# 6a  — plan on FORECAST demand (31-week model, report weeks 1-30)
-# =============================================================================
-
 def solve_6a_plan(write_output=True,
                   output_filename="output_6a.xlsx",
                   print_summary=True):
@@ -125,16 +79,13 @@ def solve_6a_plan(write_output=True,
     can consume it without any changes.
     """
 
-    # -------------------------------------------------------------------------
-    # Data
-    # -------------------------------------------------------------------------
     data30 = load_data()
     data31 = patch_data_for_31_weeks(data30)
 
     parts     = data31["parts"]
-    periods   = data31["periods"]      # 1..31
-    periods30 = data30["periods"]      # 1..30
-    demand    = data31["D_fcst"]       # 31 values
+    periods   = data31["periods"]      
+    periods30 = data30["periods"]      
+    demand    = data31["D_fcst"]       
 
     OT_COST_X      = data31["OT_COST_X"]
     OT_COST_Y      = data31["OT_COST_Y"]
@@ -143,9 +94,6 @@ def solve_6a_plan(write_output=True,
     CAP_X          = data31["CAP_X"]
     CAP_Y          = data31["CAP_Y"]
 
-    # -------------------------------------------------------------------------
-    # Model  (identical structure to 5a)
-    # -------------------------------------------------------------------------
     m, p, q, y, _ = build_base_model(
         data31, demand, "Assignment_6a", with_backorders=False
     )
@@ -162,9 +110,6 @@ def solve_6a_plan(write_output=True,
     if m.Status not in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
         raise RuntimeError("6a model not solved. Gurobi status: " + str(m.Status))
 
-    # -------------------------------------------------------------------------
-    # Cost components — weeks 1..30 ONLY
-    # -------------------------------------------------------------------------
     total_ot_x   = sum(OT_COST_X * ox[t].X          for t in periods30)
     total_ot_y   = sum(OT_COST_Y * (oy[t].X / 60.0) for t in periods30)
     mod_cost_x   = MOD_COST_X * dx.X
@@ -206,9 +151,6 @@ def solve_6a_plan(write_output=True,
         print("  New capacity WS-Y  :  " + "{:.1f}".format(new_cap_y) + " min/week")
         print("  Total Cost (W1-30) : EUR " + "{:,.2f}".format(total_cost))
 
-    # -------------------------------------------------------------------------
-    # Overtime schedule — weeks 1..30 only
-    # -------------------------------------------------------------------------
     ot_rows = []
     for t in periods30:
         ot_rows.append({
@@ -221,9 +163,6 @@ def solve_6a_plan(write_output=True,
         })
     df_ot = pd.DataFrame(ot_rows).set_index("Period")
 
-    # -------------------------------------------------------------------------
-    # Summary
-    # -------------------------------------------------------------------------
     summary_rows = [
         {"Metric": "Setup Cost (EUR)   [W1-W30]",    "Value": round(total_setup, 2)},
         {"Metric": "Holding Cost (EUR) [W1-W30]",    "Value": round(total_holding, 2)},
@@ -240,7 +179,6 @@ def solve_6a_plan(write_output=True,
     ]
     df_summary = pd.DataFrame(summary_rows).set_index("Metric")
 
-    # Production / inventory / setup — sliced to weeks 1..30
     df_prod  = slice_df_to_30(make_plan_df(p, parts, periods))
     df_inv   = slice_df_to_30(make_plan_df(q, parts, periods))
     df_setup = slice_df_to_30(make_setup_df(y, parts, periods))
@@ -257,9 +195,6 @@ def solve_6a_plan(write_output=True,
             "Setup Decisions": df_setup,
         })
 
-    # -------------------------------------------------------------------------
-    # Fixed plan to pass to 6b  (covers all 31 periods)
-    # -------------------------------------------------------------------------
     p_fix  = {(i, t): int(round(p[i, t].X))  for i in parts for t in periods}
     y_fix  = {(i, t): int(round(y[i, t].X))  for i in parts for t in periods}
     ox_fix = {t: float(ox[t].X)              for t in periods}
@@ -271,8 +206,8 @@ def solve_6a_plan(write_output=True,
         "data":       data31,
         "data30":     data30,
         "parts":      parts,
-        "periods":    periods,      # 1..31
-        "periods30":  periods30,    # 1..30
+        "periods":    periods,      
+        "periods30":  periods30,    
         "D_fcst":     demand,
         "p_fix":      p_fix,
         "y_fix":      y_fix,
@@ -289,19 +224,9 @@ def solve_6a_plan(write_output=True,
         "df_dem":     df_dem,
     }
 
-
-# =============================================================================
-# 6b  — evaluate fixed 6a plan under REALIZED demand (report W1-W30)
-# =============================================================================
-
 def solve_6b(plan_6a=None,
              output_filename="output_6b.xlsx",
              print_summary=True):
-    """
-    Identical to 5b but uses the fixed plan from 6a (31-week model).
-    Costs and service metrics are reported for weeks 1-30 only.
-    Week 31 is the phantom week and excluded from all output.
-    """
 
     if plan_6a is None:
         plan_6a = solve_6a_plan(write_output=False, print_summary=False)
@@ -319,9 +244,9 @@ def solve_6b(plan_6a=None,
     dx_fix  = plan_6a["dx_fix"]
     dy_fix  = plan_6a["dy_fix"]
 
-    D_fcst30 = data30["D_fcst"]   # 30 values — for reporting
-    D_real31 = data31["D_real"]   # 31 values — for the model
-    D_real30 = data30["D_real"]   # 30 values — for fill-rate denominator
+    D_fcst30 = data30["D_fcst"]   
+    D_real31 = data31["D_real"]   
+    D_real30 = data30["D_real"]   
 
     BO_COST        = data31["BO_COST"]
     OT_COST_X      = data31["OT_COST_X"]
@@ -331,9 +256,6 @@ def solve_6b(plan_6a=None,
     CAP_X          = data31["CAP_X"]
     CAP_Y          = data31["CAP_Y"]
 
-    # -------------------------------------------------------------------------
-    # Build 31-week model with backorders, realized demand
-    # -------------------------------------------------------------------------
     m, p, q, y, b = build_base_model(
         data31, D_real31, "Assignment_6b", with_backorders=True
     )
@@ -347,13 +269,11 @@ def solve_6b(plan_6a=None,
 
     m.update()
 
-    # Remove "no_final_backorder" — same reasoning as 5b
     c_final_bo = m.getConstrByName("no_final_backorder")
     if c_final_bo is not None:
         m.remove(c_final_bo)
         m.update()
 
-    # Fix all 6a decisions (all 31 periods)
     for i in parts:
         for t in periods:
             m.addConstr(p[i, t] == p_fix[i, t], name="fix_p_" + i + "_" + str(t))
@@ -371,9 +291,6 @@ def solve_6b(plan_6a=None,
     if m.Status not in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
         raise RuntimeError("6b model not solved. Gurobi status: " + str(m.Status))
 
-    # -------------------------------------------------------------------------
-    # Costs — weeks 1..30 only
-    # -------------------------------------------------------------------------
     total_ot_x   = sum(OT_COST_X * ox[t].X          for t in periods30)
     total_ot_y   = sum(OT_COST_Y * (oy[t].X / 60.0) for t in periods30)
     mod_cost_x   = MOD_COST_X * dx.X
@@ -404,7 +321,6 @@ def solve_6b(plan_6a=None,
     rows.append(total_row)
     df_cost = pd.DataFrame(rows).set_index("Part")
 
-    # Service level & fill rate — weeks 1..30
     periods_with_bo = sum(1 for t in periods30 if b[t].X > 0.5)
     service_level   = 1.0 - periods_with_bo / len(periods30)
 
@@ -431,9 +347,6 @@ def solve_6b(plan_6a=None,
         print("  Service Level      :  " + "{:.2%}".format(service_level))
         print("  Fill Rate          :  " + "{:.2%}".format(fill_rate))
 
-    # -------------------------------------------------------------------------
-    # Output DataFrames — all sliced to weeks 1..30
-    # -------------------------------------------------------------------------
     ot_rows = []
     for t in periods30:
         ot_rows.append({
@@ -495,10 +408,6 @@ def solve_6b(plan_6a=None,
         "df_cost":       df_cost,
     }
 
-
-# =============================================================================
-# Entry point
-# =============================================================================
 
 if __name__ == "__main__":
     print("\n" + "=" * 70)
