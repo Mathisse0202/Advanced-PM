@@ -1,17 +1,3 @@
-"""
-utils.py
---------
-Shared data loading and helper functions for APM Project 2026.
-All assignments import from this file.
- 
-Usage:
-    from utils import load_data, build_base_model, add_backorder_vars,
-                      add_capacity_constraints, add_overtime_vars,
-                      add_modernization_vars, compute_service_metrics,
-                      make_plan_df, make_setup_df, build_cost_summary,
-                      write_excel
-"""
- 
 import json
 import pandas as pd
 from collections import defaultdict
@@ -40,17 +26,17 @@ def load_data(path="input_data.json"):
  
     CAP_X     = raw["workstation_X"]["capacity_per_week"]
     CAP_Y     = raw["workstation_Y"]["available_minutes_per_week"]
-    PROC_Y    = raw["workstation_Y"]["processing_time_minutes"]  # {part: minutes}
+    PROC_Y    = raw["workstation_Y"]["processing_time_minutes"]  
  
     OT_COST_X = raw["overtime"]["cost_per_unit_X"]
     OT_MAX_X  = raw["overtime"]["max_units_X"]
     OT_COST_Y = raw["overtime"]["cost_per_hour_Y"]
-    OT_MAX_Y  = raw["overtime"]["max_hours_Y"] * 60  # stored as minutes internally
+    OT_MAX_Y  = raw["overtime"]["max_hours_Y"] * 60  
  
     MOD_COST_X     = raw["modernization"]["cost_per_unit_X"]
     MOD_MAX_X      = raw["modernization"]["max_units_X"]
     MOD_COST_PCT_Y = raw["modernization"]["cost_per_pct_Y"]
-    MOD_INCR_Y     = raw["modernization"]["increment_eur_Y"]   # EUR 15 per increment
+    MOD_INCR_Y     = raw["modernization"]["increment_eur_Y"]   
     MOD_MAX_PCT_Y  = raw["modernization"]["max_pct_Y"]
  
     BO_COST = raw["backorder_cost_per_unit_per_period"]
@@ -104,24 +90,7 @@ def load_data(path="input_data.json"):
 # =============================================================================
  
 def build_base_model(data, demand, model_name, with_backorders=False):
-    """
-    Build the core MIP model (inventory balance + lot sizing).
- 
-    Parameters
-    ----------
-    data            : dict from load_data()
-    demand          : list of length T — the demand to plan against
-    model_name      : string label for Gurobi
-    with_backorders : if True, add backorder variable b[t] for E2801
- 
-    Returns
-    -------
-    m      : Gurobi model (not yet optimized)
-    p      : production variables  p[part, period]
-    q      : inventory variables   q[part, period]
-    y      : setup binary variables y[part, period]
-    b      : backorder variables    b[period]  (None if with_backorders=False)
-    """
+    
     import gurobipy as gp
     from gurobipy import GRB
  
@@ -141,7 +110,6 @@ def build_base_model(data, demand, model_name, with_backorders=False):
     m.setParam("OutputFlag", 1)
     m.setParam("MIPGap", 1e-4)
  
-    # Production and inventory quantities are integers (discrete units)
     p = m.addVars(parts, periods, name="p", lb=0.0, vtype=GRB.INTEGER)
     q = m.addVars(parts, periods, name="q", lb=0.0, vtype=GRB.INTEGER)
     y = m.addVars(parts, periods, name="y", vtype=GRB.BINARY)
