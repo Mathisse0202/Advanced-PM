@@ -1,29 +1,3 @@
-"""
-Assignment 6
-============
-Start from the model in assignment 5 and improve performance under real demand
-by adding a stochastic buffer for the end product E2801.
-
-Approach
---------
-1. Baseline plan: reuse the fixed plan from Assignment 5a
-2. Improved plan: solve the Assignment 5 model again, but with a safety stock
-   constraint on E2801
-3. Control step: evaluate both fixed plans under realized demand
-
-Chosen stochastic buffer
-------------------------
-95% service-level safety stock for E2801:
-    buffer = 42 units
-
-Output
-------
-- output_6a.xlsx                : buffered plan under forecast demand
-- output_6_baseline_control.xlsx: fixed 5a plan evaluated on realized demand
-- output_6_buffer_control.xlsx  : fixed 6a plan evaluated on realized demand
-- output_6_comparison.xlsx      : side-by-side comparison
-"""
-
 import importlib.util
 from pathlib import Path
 
@@ -45,16 +19,9 @@ from utils import (
     print_cost_summary,
 )
 
-# -------------------------------------------------------------------------
-# Parameters for Assignment 6
-# -------------------------------------------------------------------------
-BUFFER_UNITS = 59   # 95% stochastic safety stock for E2801
-# If you want bias-corrected uplift instead, 45 is also defensible.
+BUFFER_UNITS = 59  
 
 
-# -------------------------------------------------------------------------
-# Load 5aFUNCTION.py
-# -------------------------------------------------------------------------
 def load_assignment_5a_module():
     module_path = Path(__file__).with_name("5aFUNCTION.py")
     spec = importlib.util.spec_from_file_location("assignment5a_module", module_path)
@@ -67,16 +34,8 @@ def load_assignment_5a_module():
     return module
 
 
-# -------------------------------------------------------------------------
-# Solve buffered 6a plan
-# -------------------------------------------------------------------------
 def solve_6a_buffered_plan(buffer_units=42, write_output=True, output_filename="output_6a.xlsx", print_summary=True):
-    """
-    Solve the Assignment 5 model again, but protect the end product E2801
-    with a stochastic safety stock.
-
-    Returns a fixed plan dictionary, analogous to 5aFUNCTION.py.
-    """
+    
 
     data           = load_data()
     parts          = data["parts"]
@@ -91,7 +50,6 @@ def solve_6a_buffered_plan(buffer_units=42, write_output=True, output_filename="
     CAP_X          = data["CAP_X"]
     CAP_Y          = data["CAP_Y"]
 
-    # --- Build model ---
     m, p, q, y, _ = build_base_model(
         data, demand, "Assignment_6a_buffered", with_backorders=False
     )
@@ -102,7 +60,6 @@ def solve_6a_buffered_plan(buffer_units=42, write_output=True, output_filename="
     set_combined_objective(m, p, q, y, ox, oy, dx, dy, None, data, with_backorders=False)
     add_capacity_combined(m, p, ox, oy, dx, dy, data)
 
-    # Stochastic safety stock for end product E2801
     for t in periods:
         m.addConstr(q["E2801", t] >= buffer_units, name="ss_E2801_" + str(t))
 
@@ -111,7 +68,6 @@ def solve_6a_buffered_plan(buffer_units=42, write_output=True, output_filename="
     if m.Status not in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
         raise RuntimeError("6a model not solved. Gurobi status: " + str(m.Status))
 
-    # --- Cost components ---
     total_ot_x   = sum(OT_COST_X * ox[t].X for t in periods)
     total_ot_y   = sum(OT_COST_Y * (oy[t].X / 60.0) for t in periods)
     mod_cost_x   = MOD_COST_X * dx.X
@@ -144,7 +100,6 @@ def solve_6a_buffered_plan(buffer_units=42, write_output=True, output_filename="
         print("  New capacity WS-Y  :  " + "{:.1f}".format(new_cap_y) + " min/week")
         print("  Total Cost         : EUR " + "{:,.2f}".format(total_cost))
 
-    # --- Overtime schedule ---
     ot_rows = []
     for t in periods:
         ot_rows.append({
@@ -188,7 +143,6 @@ def solve_6a_buffered_plan(buffer_units=42, write_output=True, output_filename="
             "Setup Decisions": df_setup,
         })
 
-    # Fixed plan for realized-demand evaluation
     p_fix  = {(i, t): int(round(p[i, t].X)) for i in parts for t in periods}
     y_fix  = {(i, t): int(round(y[i, t].X)) for i in parts for t in periods}
     ox_fix = {t: float(ox[t].X) for t in periods}
@@ -211,14 +165,7 @@ def solve_6a_buffered_plan(buffer_units=42, write_output=True, output_filename="
     }
 
 
-# -------------------------------------------------------------------------
-# Evaluate a fixed plan under realized demand
-# -------------------------------------------------------------------------
 def evaluate_fixed_plan_under_real_demand(plan, label, output_filename):
-    """
-    Evaluate a fixed plan under realized demand, with backorders allowed.
-    This is the control step.
-    """
 
     data    = plan["data"]
     parts   = plan["parts"]
@@ -242,7 +189,6 @@ def evaluate_fixed_plan_under_real_demand(plan, label, output_filename):
     CAP_Y          = data["CAP_Y"]
     PROC_Y         = data["PROC_Y"]
 
-    # --- Build evaluation model ---
     m, p, q, y, b = build_base_model(
         data, D_real, "Eval_" + label, with_backorders=True
     )
@@ -255,13 +201,11 @@ def evaluate_fixed_plan_under_real_demand(plan, label, output_filename):
 
     m.update()
 
-    # Fixed-plan evaluation: backlog may remain at end of horizon
     c_final_bo = m.getConstrByName("no_final_backorder")
     if c_final_bo is not None:
         m.remove(c_final_bo)
         m.update()
 
-    # Fix all decisions from source plan
     for i in parts:
         for t in periods:
             m.addConstr(p[i, t] == p_fix[i, t], name="fix_p_" + i + "_" + str(t))
@@ -279,7 +223,6 @@ def evaluate_fixed_plan_under_real_demand(plan, label, output_filename):
     if m.Status not in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
         raise RuntimeError("Evaluation model not solved for " + label + ". Status: " + str(m.Status))
 
-    # --- Cost components ---
     total_ot_x   = sum(OT_COST_X * ox[t].X for t in periods)
     total_ot_y   = sum(OT_COST_Y * (oy[t].X / 60.0) for t in periods)
     mod_cost_x   = MOD_COST_X * dx.X
@@ -315,7 +258,6 @@ def evaluate_fixed_plan_under_real_demand(plan, label, output_filename):
     print("  Service Level      :  " + "{:.2%}".format(service_level))
     print("  Fill Rate          :  " + "{:.2%}".format(fill_rate))
 
-    # --- Overtime schedule ---
     ot_rows = []
     for t in periods:
         x_used = p["E2801", t].X
@@ -386,10 +328,6 @@ def evaluate_fixed_plan_under_real_demand(plan, label, output_filename):
     }
 
 
-# -------------------------------------------------------------------------
-# Run Assignment 6
-# -------------------------------------------------------------------------
-# Baseline from 5a
 assignment5a = load_assignment_5a_module()
 baseline_5a_plan = assignment5a.solve_5a_plan(
     write_output=False,
@@ -397,7 +335,6 @@ baseline_5a_plan = assignment5a.solve_5a_plan(
     print_summary=False
 )
 
-# Improved buffered plan
 buffered_6a_plan = solve_6a_buffered_plan(
     buffer_units=BUFFER_UNITS,
     write_output=True,
@@ -405,7 +342,6 @@ buffered_6a_plan = solve_6a_buffered_plan(
     print_summary=True
 )
 
-# Control evaluations on realized demand
 baseline_control = evaluate_fixed_plan_under_real_demand(
     baseline_5a_plan,
     label="5A baseline on realized demand",
@@ -418,7 +354,6 @@ buffer_control = evaluate_fixed_plan_under_real_demand(
     output_filename="output_6_buffer_control.xlsx"
 )
 
-# Comparison table
 df_compare = pd.DataFrame([
     {"Plan": "5A baseline", **baseline_control},
     {"Plan": "6A buffered", **buffer_control},

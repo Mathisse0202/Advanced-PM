@@ -1,18 +1,3 @@
-"""
-Assignment 4a
-=============
-Finite capacity with permanent modernization option.
-Using FORECASTED demand, no backorders.
-
-WS-X modernization : EUR 10 / extra unit of permanent capacity, max 200 units
-WS-Y modernization : EUR 1500 / 1% capacity increase, in increments of EUR 15
-                     (= 0.01% per increment), max 40%
-
-The investment is paid ONCE and applies to all 30 periods.
-
-Output: output_4a.xlsx
-"""
-
 import pandas as pd
 from gurobipy import GRB
 from utils import (
@@ -32,18 +17,14 @@ CAP_X          = data["CAP_X"]
 CAP_Y          = data["CAP_Y"]
 demand         = data["D_fcst"]
 
-# --- Build model ---
 m, p, q, y, b = build_base_model(
     data, demand, "Assignment_4a", with_backorders=False
 )
 
-# Add permanent modernization variables
 dx, dy = add_modernization_vars(m, data)
 
-# Set full objective including modernization investment cost
 set_modernization_objective(m, p, q, y, dx, dy, b, data, with_backorders=False)
 
-# Add capacity constraints extended with permanent modernization
 add_capacity_with_modernization(m, p, dx, dy, data)
 
 m.optimize()
@@ -97,5 +78,4 @@ else:
         "Setup Decisions": df_setup,
     })
 
-# Save production plan for use in 4b
     df_prod.to_csv("plan_4a.csv")

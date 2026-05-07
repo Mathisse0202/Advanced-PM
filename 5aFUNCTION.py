@@ -1,22 +1,3 @@
-"""
-Assignment 5a function
-======================
-Finite capacity with BOTH overtime and permanent modernization available.
-
-The solver chooses the optimal combination of:
-  - Permanent modernization (dx, dy): one-time investment
-  - Weekly overtime (ox[t], oy[t]): per-period variable cost
-
-Capacity constraint (combined):
-  WS-X : p[E2801,t] <= CAP_X + dx + ox[t]
-  WS-Y : 3*B1401 + 2*B2302 <= CAP_Y + (CAP_Y/100)*dy + oy[t]
-
-5a : forecasted demand, no backorders
-
-This file exposes solve_5a_plan(), so Assignment 5b can reuse
-the exact fixed plan from 5a.
-"""
-
 import pandas as pd
 from gurobipy import GRB
 from utils import (

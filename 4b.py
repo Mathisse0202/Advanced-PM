@@ -1,12 +1,3 @@
-"""
-Assignment 4b
-=============
-Uses the FIXED production plan from 4a, evaluated against REALIZED demand.
-Backorders at EUR 250 / unit / period where plan cannot meet demand.
-
-Output: output_4b.xlsx
-"""
-
 import pandas as pd
 import numpy as np
 from utils import (
@@ -35,36 +26,33 @@ SC             = data["SC"]
 Q_min          = data["Q_min"]
 demand         = data["D_real"]
 
-# --- Load fixed production plan from 4a ---
 df_plan = pd.read_csv("plan_4a.csv", index_col=0)
-# p_fixed[part][t] = production quantity
+
 p_fixed = {
     i: {t: int(df_plan.loc[i, "W" + str(t)]) for t in periods}
     for i in parts
 }
 
-# --- Derive setup decisions from production plan ---
 y_fixed = {
     i: {t: 1 if p_fixed[i][t] > 0 else 0 for t in periods}
     for i in parts
 }
 
-# --- Simulate inventory and backorders under realized demand ---
 parents = data["parents"]
-q_sim = {}   # inventory
-b_sim = {}   # backorders (only for E2801)
+q_sim = {}   
+b_sim = {}   
 
 for i in parts:
     for t in periods:
         q_prev = I0[i] if t == 1 else q_sim[i, t - 1]
 
-        # Production arriving this period
+        
         t_order = t - LT[i]
         arriving = p_fixed[i][t_order] if t_order >= 1 else 0
 
         if i == "E2801":
             b_prev = 0 if t == 1 else b_sim[t - 1]
-            # Net inventory after fulfilling demand
+            
             net = q_prev + arriving - b_prev - demand[t - 1]
             if net >= 0:
                 q_sim[i, t] = net
@@ -80,12 +68,10 @@ for i in parts:
             )
             q_sim[i, t] = q_prev + arriving - ind_demand
 
-# --- Compute costs ---
 total_setup   = sum(SC[i] * y_fixed[i][t] for i in parts for t in periods)
 total_holding = sum(HC[i] * q_sim[i, t] for i in parts for t in periods)
 total_bo      = sum(BO_COST * b_sim[t] for t in periods)
 
-# Load modernization values from 4a summary
 df_summary_4a = pd.read_excel("output_4a.xlsx", sheet_name="Summary", index_col=0)
 mod_cost_x = df_summary_4a.loc["Modernization Cost X (EUR)", "Value"]
 mod_cost_y = df_summary_4a.loc["Modernization Cost Y (EUR)", "Value"]
@@ -96,7 +82,7 @@ new_cap_y  = df_summary_4a.loc["New capacity WS-Y (min/wk)", "Value"]
 
 total_cost = total_setup + total_holding + mod_cost_x + mod_cost_y + total_bo
 
-# --- Service metrics ---
+
 periods_with_bo = sum(1 for t in periods if b_sim[t] > 0.5)
 service_level   = 1.0 - periods_with_bo / len(periods)
 total_demand    = sum(demand)
@@ -106,7 +92,6 @@ new_backorders  = sum(
 )
 fill_rate = 1.0 - new_backorders / total_demand
 
-# --- Console output ---
 print("\n" + "=" * 70)
 print("  ASSIGNMENT 4B — Fixed Plan from 4a + Realized Demand + Backorders")
 print("=" * 70)
@@ -122,7 +107,6 @@ print("  Service Level      :  " + "{:.2%}".format(service_level))
 print("  Fill Rate          :  " + "{:.2%}".format(fill_rate))
 print("=" * 70)
 
-# --- Build output DataFrames ---
 summary_rows = [
     {"Metric": "Setup Cost (EUR)",            "Value": round(total_setup, 2)},
     {"Metric": "Holding Cost (EUR)",          "Value": round(total_holding, 2)},
@@ -139,10 +123,8 @@ summary_rows = [
 ]
 df_summary = pd.DataFrame(summary_rows).set_index("Metric")
 
-# Production plan (same as 4a)
 df_prod = df_plan.copy()
 
-# Inventory plan
 inv_rows = []
 for i in parts:
     row = {"Part": i}
@@ -151,7 +133,7 @@ for i in parts:
     inv_rows.append(row)
 df_inv = pd.DataFrame(inv_rows).set_index("Part")
 
-# Setup decisions
+
 setup_rows = []
 for i in parts:
     row = {"Part": i}

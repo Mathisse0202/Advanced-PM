@@ -1,16 +1,3 @@
-"""
-Assignment 2b
-=============
-Finite capacity, realized demand.
-Evaluate the fixed production plan from Assignment 2a.
-
-WS-X : E2801 <= 800 units/week
-WS-Y : 3*B1401 + 2*B2302 <= 10 000 min/week  (7*24*60 - 80 maintenance)
-Backorders allowed.
-
-Output: output_2b.xlsx
-"""
-
 import importlib.util
 from pathlib import Path
 
@@ -27,18 +14,8 @@ from utils import (
     write_excel,
     print_cost_summary,
 )
-
-
-# -----------------------------------------------------------------------------
-# Load 2aFUNCTION.py
-# -----------------------------------------------------------------------------
 def load_assignment_2a_module():
-    """
-    Load 2aFUNCTION.py as a Python module.
 
-    This is necessary because the filename starts with a digit,
-    so a normal import statement cannot be used.
-    """
     module_path = Path(__file__).with_name("2aFUNCTION.py")
     spec = importlib.util.spec_from_file_location("assignment2a_module", module_path)
 
@@ -49,10 +26,6 @@ def load_assignment_2a_module():
     spec.loader.exec_module(module)
     return module
 
-
-# -----------------------------------------------------------------------------
-# Step 1: solve Assignment 2a and retrieve the fixed plan
-# -----------------------------------------------------------------------------
 assignment2a = load_assignment_2a_module()
 
 plan_2a = assignment2a.solve_2a_plan(
@@ -68,37 +41,27 @@ D_fcst  = plan_2a["D_fcst"]
 p_fix   = plan_2a["p_fix"]
 y_fix   = plan_2a["y_fix"]
 
-# Realized demand for 2b evaluation
 D_real  = data["D_real"]
 
-# Capacity and cost parameters
 CAP_X   = data["CAP_X"]
 CAP_Y   = data["CAP_Y"]
 PROC_Y  = data["PROC_Y"]
 BO_COST = data["BO_COST"]
 
 
-# -----------------------------------------------------------------------------
-# Step 2: evaluate the fixed 2a plan under realized demand
-# -----------------------------------------------------------------------------
 m, p, q, y, b = build_base_model(
     data, D_real, "Assignment_2b", with_backorders=True
 )
 
-# Same finite-capacity constraints as in 2a
 add_capacity_constraints(m, p, data)
 
-# Make constraint names available for lookup
 m.update()
 
-# Remove final-backorder-clearing constraint.
-# In 2b we evaluate a fixed plan, so backlog may remain at the end.
 c_final_bo = m.getConstrByName("no_final_backorder")
 if c_final_bo is not None:
     m.remove(c_final_bo)
     m.update()
 
-# Fix production quantities and setup decisions to the 2a solution
 for i in parts:
     for t in periods:
         m.addConstr(p[i, t] == p_fix[i, t], name="fix_p_" + i + "_" + str(t))
@@ -107,9 +70,6 @@ for i in parts:
 m.optimize()
 
 
-# -----------------------------------------------------------------------------
-# Results
-# -----------------------------------------------------------------------------
 if m.Status in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
 
     service_level, fill_rate = compute_service_metrics(b, D_real, periods)
@@ -127,7 +87,6 @@ if m.Status in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
     print(f"Service level: {service_level:.4f}")
     print(f"Fill rate:     {fill_rate:.4f}")
 
-    # Workstation utilisation per period
     util_rows = []
     for t in periods:
         x_used = p["E2801", t].X
@@ -153,13 +112,11 @@ if m.Status in [GRB.OPTIMAL, GRB.SUBOPTIMAL]:
     df_dem_fcst = demand_row_df(D_fcst, periods, label="Forecast Demand E2801")
     df_dem_real = demand_row_df(D_real, periods, label="Realized Demand E2801")
 
-    # Backorders per period
     bo_row = {"Part": "Backorder E2801"}
     for t in periods:
         bo_row["W" + str(t)] = int(round(b[t].X))
     df_bo = pd.DataFrame([bo_row]).set_index("Part")
 
-    # Service metrics
     df_service = pd.DataFrame([
         {"Metric": "Service Level",        "Value": round(service_level, 4)},
         {"Metric": "Fill Rate",            "Value": round(fill_rate, 4)},
